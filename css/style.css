@@ -384,6 +384,12 @@ html, body {
 .contract-deal { font-size: 0.85rem; color: var(--text-muted); margin: 0.3rem 0; }
 .contract-deal strong { color: var(--success); }
 
+.company-banner {
+  width: 100%; height: auto; max-height: 140px; object-fit: cover;
+  border-radius: var(--radius); margin-bottom: 0.8rem; display: block; box-shadow: var(--shadow);
+}
+.hero-img { width: 100%; height: auto; max-height: 150px; object-fit: cover; border-radius: 12px; margin-bottom: 0.9rem; display: block; }
+
 .history-item .amount.neg { color: var(--danger); }
 
 @media (max-width: 420px) {

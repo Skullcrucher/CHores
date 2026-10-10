@@ -1159,6 +1159,7 @@ function renderCompanyHero(p) {
     : '<em>Terrain vide… lance ton premier chantier !</em>';
 
   document.getElementById('company-hero').innerHTML = `
+    <img class="hero-img" src="assets/img/enterprise.svg" alt="">
     <div class="hero-top">
       <div class="hero-emoji">${lvl.emoji}</div>
       <div class="hero-id">
@@ -1190,7 +1191,8 @@ function companySitesHtml(p) {
   const c = p.company;
   const slots = siteSlots(p);
   const limit = state.settings.dailyTaskLimit || 3;
-  let html = `<div class="section-header"><h2>🏗️ Chantiers en cours</h2><span class="hint">${c.sites.length} / ${slots}</span></div>`;
+  let html = `<img class="company-banner" src="assets/img/sustainable.svg" alt="Infrastructures durables">
+    <div class="section-header"><h2>🏗️ Chantiers en cours</h2><span class="hint">${c.sites.length} / ${slots}</span></div>`;
 
   if (c.sites.length === 0) {
     html += `<div class="company-card empty-hint">Aucun chantier. Choisis un plan ci-dessous pour commencer à bâtir !</div>`;
@@ -1292,6 +1294,7 @@ function companyContractsHtml(p) {
   const slotsFull = mine.length >= slots;
 
   let html = `
+    <img class="company-banner" src="assets/img/temporary.svg" alt="Contrats du mois">
     <div class="company-card">
       <h3>📜 Contrats de ${monthLabel(month)}</h3>
       <p class="hint">Mise des points sur un objectif. Réussis avant la fin du mois : tu récupères ta mise <strong>+ une prime</strong>.
