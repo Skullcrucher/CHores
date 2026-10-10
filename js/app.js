@@ -2,11 +2,13 @@
    CHORES - Application familiale v2
    ============================================ */
 
-const STORAGE_KEY = 'chores_v2';
-const BACKUP_KEY = 'chores_backups_v2';
+const STORAGE_KEY = 'chores_v3';
+const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '3.0.0';
+const MAX_INFRA_LEVEL = 25;
+const RATE_PER_LEVEL = 0.2; // 0.2% per level → 5% at level 25
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -120,7 +122,7 @@ let state = {
   templates: [],
   tasks: [],
   currentProfileId: null,
-  settings: { rate: RATE_DEFAULT, theme: 'default' },
+  settings: { rate: RATE_DEFAULT, theme: 'default', dailyTaskLimit: 3 },
   lastMonthCheck: null,
 };
 
@@ -132,6 +134,8 @@ let pendingCompleteTaskId = null;
 let selectedFelt = 2;
 let pendingPasswordProfileId = null;
 let editingTemplateId = null;
+let catalogSearch = '';
+let catalogCategory = 'all';
 
 // ---------- PERSISTENCE ----------
 function loadState() {
@@ -251,6 +255,50 @@ function renderAutoBackups() {
   });
 }
 
+// ---------- INVEST HELPERS ----------
+function infraRate(level) {
+  return Math.min(5, (level || 0) * RATE_PER_LEVEL);
+}
+
+function upgradeCost(level, isTemp) {
+  // Coût croissant : très cher d'atteindre le niveau 25
+  const base = isTemp ? 40 : 50;
+  const lvl = level || 0;
+  return Math.floor(base * Math.pow(lvl + 1, 1.8));
+}
+
+function ensureInvestFields(p) {
+  if (p.capitalSustain == null) p.capitalSustain = 0;
+  if (p.capitalTemp == null) p.capitalTemp = 0;
+  if (p.infraSustain == null) p.infraSustain = 0;
+  if (p.infraTemp == null) p.infraTemp = 0;
+  if (!p.investHistory) p.investHistory = [];
+  // Migration ancienne version
+  if (p.investedPoints && !p.capitalSustain) {
+    p.capitalSustain = p.investedPoints;
+    p.investedPoints = 0;
+  }
+}
+
+function estimatedMonthlyInterest(p) {
+  ensureInvestFields(p);
+  const rS = infraRate(p.infraSustain) / 100;
+  const rT = infraRate(p.infraTemp) / 100;
+  return Math.floor(p.capitalSustain * rS + p.capitalTemp * rT);
+}
+
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function tasksDoneToday(profileId) {
+  const key = todayKey();
+  return state.tasks.filter(t =>
+    t.assigneeId === profileId && t.done && t.completedAt && t.completedAt.slice(0, 10) === key
+  ).length;
+}
+
 // ---------- MONTHLY ----------
 function checkMonthlyReset() {
   const now = new Date();
@@ -258,15 +306,34 @@ function checkMonthlyReset() {
   if (state.lastMonthCheck === currentMonth) return;
 
   state.profiles.forEach(p => {
-    if (p.type === 'child' && (p.investedPoints || 0) > 0) {
-      const interest = Math.floor(p.investedPoints * 0.10);
-      if (interest > 0) {
-        p.points = (p.points || 0) + interest;
-        p.pointsTotal = (p.pointsTotal || 0) + interest;
-        p.investHistory = p.investHistory || [];
-        p.investHistory.unshift({ date: new Date().toISOString(), amount: interest, type: 'interest' });
-      }
+    if (p.type !== 'child') {
+      p.convertedThisMonth = 0;
+      return;
     }
+    ensureInvestFields(p);
+    const interest = estimatedMonthlyInterest(p);
+    if (interest > 0) {
+      p.points = (p.points || 0) + interest;
+      p.pointsTotal = (p.pointsTotal || 0) + interest;
+      p.investHistory.unshift({
+        date: new Date().toISOString(),
+        amount: interest,
+        type: 'interest',
+        detail: `Durable ${infraRate(p.infraSustain)}% + Temp ${infraRate(p.infraTemp)}%`
+      });
+    }
+    // Réinitialisation infrastructures temporaires : capital rendu, niveau à 0
+    if (p.capitalTemp > 0) {
+      p.points = (p.points || 0) + p.capitalTemp;
+      p.investHistory.unshift({
+        date: new Date().toISOString(),
+        amount: p.capitalTemp,
+        type: 'temp_return',
+        detail: 'Capital temporaire rendu'
+      });
+      p.capitalTemp = 0;
+    }
+    p.infraTemp = 0;
     p.convertedThisMonth = 0;
   });
   state.lastMonthCheck = currentMonth;
@@ -407,10 +474,11 @@ function showMainAdmin() {
 function updateStatsBar() {
   const p = getCurrentProfile();
   if (!p) return;
+  ensureInvestFields(p);
   document.getElementById('stat-points').textContent = p.points || 0;
   document.getElementById('stat-wallet').textContent = formatMoney(p.wallet || 0);
   document.getElementById('stat-level').textContent = p.level || 1;
-  document.getElementById('stat-invest').textContent = p.investedPoints || 0;
+  document.getElementById('stat-invest').textContent = (p.capitalSustain || 0) + (p.capitalTemp || 0);
 }
 
 function backToProfiles() {
@@ -424,22 +492,35 @@ function backToProfiles() {
 // ---------- CHILD TASKS ----------
 function renderChildTasks() {
   const p = getCurrentProfile();
+  if (!p) return;
+
+  const limit = state.settings.dailyTaskLimit || 3;
+  const doneToday = tasksDoneToday(p.id);
+  const limitLabel = document.getElementById('daily-limit-label');
+  if (limitLabel) {
+    limitLabel.textContent = `${doneToday} / ${limit} aujourd'hui`;
+    limitLabel.style.color = doneToday >= limit ? 'var(--danger)' : 'var(--text-muted)';
+  }
+
   const myTasks = state.tasks.filter(t => t.assigneeId === p.id && !t.archived && !t.done);
   const list = document.getElementById('tasks-list');
 
   if (myTasks.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="emoji">📋</div><p>Aucune tâche pour le moment.<br>Un parent peut t’en attribuer.</p></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="emoji">📋</div><p>Aucune tâche en cours.<br>Choisis-en une dans le catalogue ci-dessous !</p></div>`;
   } else {
     list.innerHTML = myTasks.map(t => `
       <div class="task-card">
-        <button class="task-check" data-id="${t.id}"></button>
+        <button class="task-check" data-id="${t.id}" title="Marquer comme faite"></button>
         <div class="task-info">
           <div class="task-name">${t.name}</div>
           <div class="task-meta">
             <span class="task-points">${t.points} pts</span>
-            <span class="task-cat">${CATEGORY_LABELS[t.category] || t.category || ''}</span>
+            <span class="task-cat">${CATEGORY_LABELS[t.category] || ''}</span>
             ${t.recurrence !== 'once' ? `<span>🔁 ${t.recurrence === 'daily' ? 'Quotidien' : 'Hebdo'}</span>` : ''}
           </div>
+        </div>
+        <div class="task-actions">
+          <button class="task-cancel" data-id="${t.id}" title="Annuler">✖️</button>
         </div>
       </div>
     `).join('');
@@ -448,38 +529,138 @@ function renderChildTasks() {
   list.querySelectorAll('.task-check').forEach(btn => {
     btn.addEventListener('click', () => openDifficultyModal(btn.dataset.id));
   });
-
-  // Catalogue (lecture seule pour l'enfant)
-  const catList = document.getElementById('catalog-list');
-  const templates = state.templates.filter(t => t.active !== false);
-  if (templates.length === 0) {
-    catList.innerHTML = `<div class="empty-state"><div class="emoji">📚</div><p>Catalogue vide.</p></div>`;
-  } else {
-    const byCat = {};
-    templates.forEach(t => {
-      if (!byCat[t.category]) byCat[t.category] = [];
-      byCat[t.category].push(t);
+  list.querySelectorAll('.task-cancel').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('Retirer cette tâche de ta liste ?')) {
+        state.tasks = state.tasks.filter(t => t.id !== btn.dataset.id);
+        saveState();
+        renderChildTasks();
+        showToast('Tâche retirée');
+      }
     });
-    catList.innerHTML = Object.entries(byCat).map(([cat, items]) => `
-      <div style="margin-bottom:0.8rem">
-        <div style="font-weight:700;font-size:0.9rem;margin-bottom:0.4rem;color:var(--text-muted)">${CATEGORY_LABELS[cat] || cat}</div>
-        ${items.map(t => `
-          <div class="catalog-card" style="margin-bottom:0.5rem">
-            <div class="task-name">${t.name}</div>
-            <div class="task-meta">
-              <span class="task-points">${t.points} pts</span>
-              <span>${t.difficulty}</span>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `).join('');
+  });
+
+  renderCatalogFilters();
+  renderCatalogList();
+}
+
+function renderCatalogFilters() {
+  const el = document.getElementById('category-filters');
+  if (!el) return;
+  const cats = ['all', ...Object.keys(CATEGORY_LABELS)];
+  el.innerHTML = cats.map(c => `
+    <button class="cat-filter ${catalogCategory === c ? 'active' : ''}" data-cat="${c}">
+      ${c === 'all' ? 'Toutes' : CATEGORY_LABELS[c]}
+    </button>
+  `).join('');
+  el.querySelectorAll('.cat-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      catalogCategory = btn.dataset.cat;
+      renderCatalogFilters();
+      renderCatalogList();
+    });
+  });
+}
+
+function renderCatalogList() {
+  const catList = document.getElementById('catalog-list');
+  if (!catList) return;
+  const p = getCurrentProfile();
+  const limit = state.settings.dailyTaskLimit || 3;
+  const doneToday = p ? tasksDoneToday(p.id) : 0;
+  const atLimit = doneToday >= limit;
+  const myActiveIds = new Set(
+    state.tasks.filter(t => t.assigneeId === p?.id && !t.done && !t.archived).map(t => t.templateId)
+  );
+
+  let templates = (state.templates || []).filter(t => t.active !== false);
+  if (catalogCategory !== 'all') {
+    templates = templates.filter(t => t.category === catalogCategory);
   }
+  if (catalogSearch.trim()) {
+    const q = catalogSearch.trim().toLowerCase();
+    templates = templates.filter(t => t.name.toLowerCase().includes(q));
+  }
+
+  if (templates.length === 0) {
+    catList.innerHTML = `<div class="empty-state"><div class="emoji">🔍</div><p>Aucune tâche trouvée.</p></div>`;
+    return;
+  }
+
+  catList.innerHTML = templates.map(t => {
+    const already = myActiveIds.has(t.id);
+    const disabled = atLimit || already;
+    let btnLabel = 'Je la fais';
+    if (already) btnLabel = 'Déjà prise';
+    else if (atLimit) btnLabel = 'Limite atteinte';
+    return `
+      <div class="catalog-card" style="margin-bottom:0.5rem">
+        <div class="task-info">
+          <div class="task-name">${t.name}</div>
+          <div class="task-meta">
+            <span class="task-points">${t.points} pts</span>
+            <span class="task-cat">${CATEGORY_LABELS[t.category] || ''}</span>
+            <span>${t.difficulty}</span>
+          </div>
+        </div>
+        <button class="btn-claim" data-id="${t.id}" ${disabled ? 'disabled' : ''}>${btnLabel}</button>
+      </div>`;
+  }).join('');
+
+  catList.querySelectorAll('.btn-claim:not(:disabled)').forEach(btn => {
+    btn.addEventListener('click', () => claimTask(btn.dataset.id));
+  });
+}
+
+function claimTask(templateId) {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  const limit = state.settings.dailyTaskLimit || 3;
+  if (tasksDoneToday(p.id) >= limit) {
+    showToast(`Limite de ${limit} tâches / jour atteinte`);
+    return;
+  }
+  const tpl = state.templates.find(t => t.id === templateId);
+  if (!tpl) return;
+
+  // Évite les doublons actifs
+  const already = state.tasks.some(t => t.assigneeId === p.id && t.templateId === tpl.id && !t.done && !t.archived);
+  if (already) {
+    showToast('Tu as déjà cette tâche');
+    return;
+  }
+
+  state.tasks.push({
+    id: 't_' + Date.now() + Math.random().toString(36).slice(2, 6),
+    templateId: tpl.id,
+    name: tpl.name,
+    category: tpl.category,
+    points: tpl.points,
+    difficulty: tpl.difficulty,
+    assigneeId: p.id,
+    recurrence: 'once',
+    done: false,
+    archived: false,
+    feltDifficulty: null,
+    selfClaimed: true,
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+  });
+
+  saveState();
+  renderChildTasks();
+  showToast(`« ${tpl.name} » ajoutée ! 📋`);
 }
 
 function openDifficultyModal(taskId) {
   const task = state.tasks.find(t => t.id === taskId);
   if (!task || task.done) return;
+  const p = getCurrentProfile();
+  const limit = state.settings.dailyTaskLimit || 3;
+  if (p && tasksDoneToday(p.id) >= limit) {
+    showToast(`Limite de ${limit} tâches / jour atteinte`);
+    return;
+  }
   pendingCompleteTaskId = taskId;
   selectedFelt = 2;
   document.getElementById('diff-task-name').textContent = task.name;
@@ -495,6 +676,13 @@ function confirmComplete() {
   if (!task || task.done) return;
   const profile = state.profiles.find(p => p.id === task.assigneeId);
   if (!profile || profile.type !== 'child') return;
+
+  const limit = state.settings.dailyTaskLimit || 3;
+  if (tasksDoneToday(profile.id) >= limit) {
+    showToast(`Limite de ${limit} tâches / jour atteinte`);
+    closeModal('modal-difficulty');
+    return;
+  }
 
   task.done = true;
   task.completedAt = new Date().toISOString();
@@ -609,41 +797,134 @@ function convertPoints() {
 function renderInvest() {
   const p = getCurrentProfile();
   if (!p) return;
-  const invested = p.investedPoints || 0;
-  document.getElementById('invest-total').textContent = invested;
-  document.getElementById('invest-monthly').textContent = Math.floor(invested * 0.10);
+  ensureInvestFields(p);
+
+  const rS = infraRate(p.infraSustain);
+  const rT = infraRate(p.infraTemp);
+  const totalRate = rS + rT;
+  const monthly = estimatedMonthlyInterest(p);
+
+  document.getElementById('invest-rate-total').textContent = totalRate.toFixed(1) + ' %';
+  document.getElementById('invest-monthly').textContent = monthly;
+  document.getElementById('rate-sustain').textContent = `${rS.toFixed(1)} % / 5 %`;
+  document.getElementById('rate-temp').textContent = `${rT.toFixed(1)} % / 5 %`;
+  document.getElementById('cap-sustain').textContent = (p.capitalSustain || 0) + ' pts';
+  document.getElementById('cap-temp').textContent = (p.capitalTemp || 0) + ' pts';
+  document.getElementById('lvl-sustain').textContent = `${p.infraSustain || 0} / ${MAX_INFRA_LEVEL}`;
+  document.getElementById('lvl-temp').textContent = `${p.infraTemp || 0} / ${MAX_INFRA_LEVEL}`;
+  document.getElementById('bar-sustain').style.width = ((p.infraSustain || 0) / MAX_INFRA_LEVEL * 100) + '%';
+  document.getElementById('bar-temp').style.width = ((p.infraTemp || 0) / MAX_INFRA_LEVEL * 100) + '%';
+  document.getElementById('cost-sustain').textContent = upgradeCost(p.infraSustain, false);
+  document.getElementById('cost-temp').textContent = upgradeCost(p.infraTemp, true);
+
+  // Stats bar invest total
+  const invEl = document.getElementById('stat-invest');
+  if (invEl) invEl.textContent = (p.capitalSustain || 0) + (p.capitalTemp || 0);
 
   const hist = document.getElementById('invest-history-list');
-  const history = (p.investHistory || []).slice(0, 10);
+  const history = (p.investHistory || []).slice(0, 12);
   hist.innerHTML = history.length === 0
-    ? '<p class="hint">Aucun revenu pour le moment.</p>'
-    : history.map(h => `
-      <div class="history-item">
-        <div>
-          <div>${h.type === 'interest' ? '📈 Intérêts mensuels' : '💼 Investissement'}</div>
-          <div class="date">${formatDate(h.date)}</div>
-        </div>
-        <div class="amount">${h.type === 'interest' ? '+' : ''}${h.amount} pts</div>
-      </div>`).join('');
+    ? '<p class="hint">Aucun mouvement pour le moment.</p>'
+    : history.map(h => {
+      let label = '💼 Investissement';
+      if (h.type === 'interest') label = '📈 Intérêts mensuels';
+      else if (h.type === 'temp_return') label = '↩️ Capital temporaire rendu';
+      else if (h.type === 'upgrade') label = '⬆️ Amélioration infra';
+      else if (h.type === 'invest_sustain') label = '🌱 Placement durable';
+      else if (h.type === 'invest_temp') label = '⚡ Placement temporaire';
+      return `
+        <div class="history-item">
+          <div>
+            <div>${label}${h.detail ? ' · ' + h.detail : ''}</div>
+            <div class="date">${formatDate(h.date)}</div>
+          </div>
+          <div class="amount">${h.type === 'interest' || h.type === 'temp_return' ? '+' : '-'}${h.amount} pts</div>
+        </div>`;
+    }).join('');
 }
 
-function investPoints() {
+function investSustain() {
   const p = getCurrentProfile();
   if (!p || p.type !== 'child') return;
-  const pts = parseInt(document.getElementById('invest-points').value) || 0;
+  ensureInvestFields(p);
+  const pts = parseInt(document.getElementById('invest-sustain-pts').value) || 0;
   if (pts <= 0) { showToast('Entre un nombre valide'); return; }
   if (pts > (p.points || 0)) { showToast('Pas assez de points !'); return; }
-
   p.points -= pts;
-  p.investedPoints = (p.investedPoints || 0) + pts;
-  p.investHistory = p.investHistory || [];
-  p.investHistory.unshift({ date: new Date().toISOString(), amount: pts, type: 'invest' });
-
+  p.capitalSustain += pts;
+  p.investHistory.unshift({ date: new Date().toISOString(), amount: pts, type: 'invest_sustain' });
   saveState();
-  document.getElementById('invest-points').value = '';
+  document.getElementById('invest-sustain-pts').value = '';
   updateStatsBar();
   renderInvest();
-  showToast(`${pts} points investis 🏢`);
+  showToast(`${pts} pts placés en durable 🌱`);
+}
+
+function investTemp() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  ensureInvestFields(p);
+  const pts = parseInt(document.getElementById('invest-temp-pts').value) || 0;
+  if (pts <= 0) { showToast('Entre un nombre valide'); return; }
+  if (pts > (p.points || 0)) { showToast('Pas assez de points !'); return; }
+  p.points -= pts;
+  p.capitalTemp += pts;
+  p.investHistory.unshift({ date: new Date().toISOString(), amount: pts, type: 'invest_temp' });
+  saveState();
+  document.getElementById('invest-temp-pts').value = '';
+  updateStatsBar();
+  renderInvest();
+  showToast(`${pts} pts placés en temporaire ⚡`);
+}
+
+function upgradeSustain() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  ensureInvestFields(p);
+  if ((p.infraSustain || 0) >= MAX_INFRA_LEVEL) {
+    showToast('Niveau max durable atteint (5 %)');
+    return;
+  }
+  const cost = upgradeCost(p.infraSustain, false);
+  if ((p.points || 0) < cost) {
+    showToast(`Il faut ${cost} points`);
+    return;
+  }
+  p.points -= cost;
+  p.infraSustain = (p.infraSustain || 0) + 1;
+  p.investHistory.unshift({
+    date: new Date().toISOString(), amount: cost, type: 'upgrade',
+    detail: `Durable niv. ${p.infraSustain} → ${infraRate(p.infraSustain).toFixed(1)}%`
+  });
+  saveState();
+  updateStatsBar();
+  renderInvest();
+  showToast(`Infra durable niv. ${p.infraSustain} ! (${infraRate(p.infraSustain).toFixed(1)} %)`);
+}
+
+function upgradeTemp() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  ensureInvestFields(p);
+  if ((p.infraTemp || 0) >= MAX_INFRA_LEVEL) {
+    showToast('Niveau max temporaire atteint (5 %)');
+    return;
+  }
+  const cost = upgradeCost(p.infraTemp, true);
+  if ((p.points || 0) < cost) {
+    showToast(`Il faut ${cost} points`);
+    return;
+  }
+  p.points -= cost;
+  p.infraTemp = (p.infraTemp || 0) + 1;
+  p.investHistory.unshift({
+    date: new Date().toISOString(), amount: cost, type: 'upgrade',
+    detail: `Temp niv. ${p.infraTemp} → ${infraRate(p.infraTemp).toFixed(1)}%`
+  });
+  saveState();
+  updateStatsBar();
+  renderInvest();
+  showToast(`Infra temporaire niv. ${p.infraTemp} ! (${infraRate(p.infraTemp).toFixed(1)} %)`);
 }
 
 function renderProgress() {
@@ -974,7 +1255,10 @@ async function saveProfile() {
       ceiling,
       points: 0,
       wallet: 0,
-      investedPoints: 0,
+      capitalSustain: 0,
+      capitalTemp: 0,
+      infraSustain: 0,
+      infraTemp: 0,
       level: 1,
       xp: 0,
       tasksDone: 0,
@@ -1023,6 +1307,8 @@ function renderThemes() {
 
 function openSettings() {
   document.getElementById('rate-input').value = state.settings.rate;
+  const dailyInput = document.getElementById('daily-limit-input');
+  if (dailyInput) dailyInput.value = state.settings.dailyTaskLimit || 3;
   renderThemes();
   renderAutoBackups();
   openModal('modal-settings');
@@ -1155,9 +1441,30 @@ function init() {
   document.getElementById('btn-theme-admin').addEventListener('click', openSettings);
 
   document.getElementById('btn-convert').addEventListener('click', convertPoints);
-  document.getElementById('btn-invest').addEventListener('click', investPoints);
   document.getElementById('convert-points').addEventListener('input', updateConvertPreview);
   document.getElementById('btn-confirm-complete').addEventListener('click', confirmComplete);
+
+  document.getElementById('btn-invest-sustain').addEventListener('click', investSustain);
+  document.getElementById('btn-invest-temp').addEventListener('click', investTemp);
+  document.getElementById('btn-upgrade-sustain').addEventListener('click', upgradeSustain);
+  document.getElementById('btn-upgrade-temp').addEventListener('click', upgradeTemp);
+
+  const searchInput = document.getElementById('catalog-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      catalogSearch = searchInput.value;
+      renderCatalogList();
+    });
+  }
+
+  const dailyLimitInput = document.getElementById('daily-limit-input');
+  if (dailyLimitInput) {
+    dailyLimitInput.addEventListener('change', e => {
+      state.settings.dailyTaskLimit = Math.max(1, parseInt(e.target.value) || 3);
+      saveState();
+      showToast('Limite journalière mise à jour');
+    });
+  }
 
   document.getElementById('btn-add-template').addEventListener('click', () => openTemplateModal());
   document.getElementById('btn-save-template').addEventListener('click', saveTemplate);

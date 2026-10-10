@@ -108,12 +108,18 @@
 
       <div class="tab-content">
         <div id="tab-tasks" class="tab active">
-          <div class="section-header"><h2>Mes tâches</h2></div>
+          <div class="section-header">
+            <h2>Mes tâches</h2>
+            <span class="hint" id="daily-limit-label">0 / 3 aujourd'hui</span>
+          </div>
           <div id="tasks-list" class="tasks-list"></div>
           <div class="section-header" style="margin-top:1.5rem">
-            <h2>Catalogue</h2>
+            <h2>Choisir une tâche</h2>
           </div>
-          <p class="hint" style="margin-bottom:0.8rem">Demande à un parent de t’attribuer une tâche, ou regarde ce qui est disponible.</p>
+          <div class="search-box">
+            <input type="search" id="catalog-search" placeholder="🔍 Rechercher une tâche…" autocomplete="off">
+          </div>
+          <div class="category-filters" id="category-filters"></div>
           <div id="catalog-list" class="tasks-list"></div>
         </div>
 
@@ -143,17 +149,40 @@
         <div id="tab-invest" class="tab">
           <div class="invest-card">
             <h3>🏢 Mon Entreprise</h3>
-            <p class="invest-desc">Investis tes points restants ! Ils génèrent <strong>+10 %</strong> de points chaque mois.</p>
+            <p class="invest-desc">Construis des infrastructures pour générer des points chaque mois.<br>
+              <strong>Maximum total : 10 %</strong> (5 % durable + 5 % temporaire) — très difficile à atteindre.</p>
             <div class="invest-stats">
-              <div><span class="big-number" id="invest-total">0</span><span>Points investis</span></div>
-              <div><span class="big-number" id="invest-monthly">0</span><span>Générés / mois</span></div>
+              <div><span class="big-number" id="invest-rate-total">0 %</span><span>Taux total / mois</span></div>
+              <div><span class="big-number" id="invest-monthly">0</span><span>Points estimés / mois</span></div>
             </div>
-            <div class="convert-row">
-              <input type="number" id="invest-points" min="1" placeholder="Points à investir">
-              <button class="btn-primary" id="btn-invest">Investir</button>
-            </div>
-            <p class="hint">Les points investis ne peuvent plus être convertis en argent.</p>
           </div>
+
+          <div class="invest-card">
+            <h3>🌱 Infrastructures durables <span class="rate-badge" id="rate-sustain">0 % / 5 %</span></h3>
+            <p class="hint">Permanentes. Le capital reste investi. Taux max 5 %.</p>
+            <div class="stat-row"><span>Capital durable</span><span id="cap-sustain">0 pts</span></div>
+            <div class="stat-row"><span>Niveau d'infra</span><span id="lvl-sustain">0 / 25</span></div>
+            <div class="xp-bar" style="margin:0.6rem 0"><div class="xp-fill" id="bar-sustain"></div></div>
+            <div class="convert-row">
+              <input type="number" id="invest-sustain-pts" min="1" placeholder="Points à placer">
+              <button class="btn-primary" id="btn-invest-sustain">Placer</button>
+            </div>
+            <button class="btn-secondary btn-block" id="btn-upgrade-sustain">⬆️ Améliorer l'infra (<span id="cost-sustain">50</span> pts)</button>
+          </div>
+
+          <div class="invest-card">
+            <h3>⚡ Infrastructures temporaires <span class="rate-badge" id="rate-temp">0 % / 5 %</span></h3>
+            <p class="hint">Valables ce mois seulement. Réinitialisées en fin de mois (capital rendu).</p>
+            <div class="stat-row"><span>Capital temporaire</span><span id="cap-temp">0 pts</span></div>
+            <div class="stat-row"><span>Niveau d'infra</span><span id="lvl-temp">0 / 25</span></div>
+            <div class="xp-bar" style="margin:0.6rem 0"><div class="xp-fill" id="bar-temp"></div></div>
+            <div class="convert-row">
+              <input type="number" id="invest-temp-pts" min="1" placeholder="Points à placer">
+              <button class="btn-primary" id="btn-invest-temp">Placer</button>
+            </div>
+            <button class="btn-secondary btn-block" id="btn-upgrade-temp">⬆️ Améliorer l'infra (<span id="cost-temp">40</span> pts)</button>
+          </div>
+
           <div class="invest-history">
             <h3>Revenus générés</h3>
             <div id="invest-history-list"></div>
@@ -219,6 +248,7 @@
 
         <div id="tab-admin-assign" class="tab">
           <div class="section-header"><h2>Attribuer une tâche</h2></div>
+          <p class="hint" style="margin-bottom:0.8rem">Optionnel : les enfants choisissent en priorité leurs tâches eux-mêmes. L’attribution parent sert pour les tâches récurrentes ou obligatoires.</p>
           <div class="form-card">
             <div class="form-group">
               <label>Tâche du catalogue</label>
@@ -328,6 +358,11 @@
         <div class="form-group">
           <label>Taux de conversion</label>
           <p class="hint">1 point = <input type="number" id="rate-input" value="0.10" min="0.01" max="1" step="0.01" style="width:70px"> €</p>
+        </div>
+        <div class="form-group">
+          <label>Limite de tâches par jour (enfants)</label>
+          <input type="number" id="daily-limit-input" value="3" min="1" max="20" step="1">
+          <p class="hint">Nombre max de tâches qu’un enfant peut valider par jour.</p>
         </div>
         <div class="form-group">
           <label>💾 Sauvegardes</label>
