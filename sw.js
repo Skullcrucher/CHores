@@ -1,4 +1,4 @@
-const CACHE = 'chores-v6';
+const CACHE = 'chores-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -11,7 +11,8 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  // cache: 'reload' évite de remplir le cache avec des fichiers périmés du cache HTTP
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(a => new Request(a, { cache: 'reload' })))));
   self.skipWaiting();
 });
 
@@ -24,8 +25,18 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
+// Réseau d'abord (toujours la dernière version), cache en secours hors-ligne.
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request))
+    fetch(e.request)
+      .then(res => {
+        if (res.ok && new URL(e.request.url).origin === self.location.origin) {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });
