@@ -147,46 +147,15 @@
         </div>
 
         <div id="tab-invest" class="tab">
-          <div class="invest-card">
-            <h3>🏢 Mon Entreprise</h3>
-            <p class="invest-desc">Construis des infrastructures pour générer des points chaque mois.<br>
-              <strong>Maximum total : 10 %</strong> (5 % durable + 5 % temporaire) — très difficile à atteindre.</p>
-            <div class="invest-stats">
-              <div><span class="big-number" id="invest-rate-total">0 %</span><span>Taux total / mois</span></div>
-              <div><span class="big-number" id="invest-monthly">0</span><span>Points estimés / mois</span></div>
-            </div>
+          <div class="company-hero" id="company-hero"></div>
+          <div class="company-kpis" id="company-kpis"></div>
+          <div class="segmented" id="company-views">
+            <button class="seg-btn active" data-action="view" data-id="sites">🏗️ Chantiers</button>
+            <button class="seg-btn" data-action="view" data-id="contracts">📜 Contrats</button>
+            <button class="seg-btn" data-action="view" data-id="treasury">🏦 Trésorerie</button>
+            <button class="seg-btn" data-action="view" data-id="journal">📊 Journal</button>
           </div>
-
-          <div class="invest-card">
-            <h3>🌱 Infrastructures durables <span class="rate-badge" id="rate-sustain">0 % / 5 %</span></h3>
-            <p class="hint">Permanentes. Le capital reste investi. Taux max 5 %.</p>
-            <div class="stat-row"><span>Capital durable</span><span id="cap-sustain">0 pts</span></div>
-            <div class="stat-row"><span>Niveau d'infra</span><span id="lvl-sustain">0 / 25</span></div>
-            <div class="xp-bar" style="margin:0.6rem 0"><div class="xp-fill" id="bar-sustain"></div></div>
-            <div class="convert-row">
-              <input type="number" id="invest-sustain-pts" min="1" placeholder="Points à placer">
-              <button class="btn-primary" id="btn-invest-sustain">Placer</button>
-            </div>
-            <button class="btn-secondary btn-block" id="btn-upgrade-sustain">⬆️ Améliorer l'infra (<span id="cost-sustain">50</span> pts)</button>
-          </div>
-
-          <div class="invest-card">
-            <h3>⚡ Infrastructures temporaires <span class="rate-badge" id="rate-temp">0 % / 5 %</span></h3>
-            <p class="hint">Valables ce mois seulement. Réinitialisées en fin de mois (capital rendu).</p>
-            <div class="stat-row"><span>Capital temporaire</span><span id="cap-temp">0 pts</span></div>
-            <div class="stat-row"><span>Niveau d'infra</span><span id="lvl-temp">0 / 25</span></div>
-            <div class="xp-bar" style="margin:0.6rem 0"><div class="xp-fill" id="bar-temp"></div></div>
-            <div class="convert-row">
-              <input type="number" id="invest-temp-pts" min="1" placeholder="Points à placer">
-              <button class="btn-primary" id="btn-invest-temp">Placer</button>
-            </div>
-            <button class="btn-secondary btn-block" id="btn-upgrade-temp">⬆️ Améliorer l'infra (<span id="cost-temp">40</span> pts)</button>
-          </div>
-
-          <div class="invest-history">
-            <h3>Revenus générés</h3>
-            <div id="invest-history-list"></div>
-          </div>
+          <div id="company-view"></div>
         </div>
 
         <div id="tab-progress" class="tab">
