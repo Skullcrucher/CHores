@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.3.2';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -180,7 +180,7 @@ function getAutoBackups() {
   try {
     const raw = localStorage.getItem(BACKUP_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  } catch (e) { return []; }
 }
 
 function createAutoBackup() {
@@ -329,7 +329,7 @@ const RAISE_MODES = {
 };
 
 function raiseBranch(p) {
-  const mode = RAISE_MODES[p?.company?.raiseMode || state.settings.raiseMode] || RAISE_MODES.progressive;
+  const mode = RAISE_MODES[(p && p.company && p.company.raiseMode) || state.settings.raiseMode] || RAISE_MODES.progressive;
   return {
     id: 'salaire', name: 'Direction des salaires', emoji: '🤝', special: true, noSpeed: true,
     spec: 'Augmenter ton argent de poche (accord parent)', reqs: mode.reqs, levels: mode.levels,
@@ -597,7 +597,7 @@ function activityFactor(workedDays) {
 function taskPointsInMonth(p, month) {
   return state.tasks
     .filter(t => t.assigneeId === p.id && t.done && t.completedAt && monthKeyOf(t.completedAt) === month)
-    .reduce((s, t) => s + (t.earnedPoints ?? t.points), 0);
+    .reduce((s, t) => s + (t.earnedPoints != null ? t.earnedPoints : t.points), 0);
 }
 
 /** Les intérêts dépendent de l'activité et ne dépassent jamais la moitié des points gagnés en travaillant. */
@@ -659,7 +659,7 @@ function contractLabel(c) {
 function contractProgress(p, c) {
   const done = completedTasksSince(p.id, c.signedAt).filter(t => monthKeyOf(t.completedAt) === c.month);
   if (c.type === 'days') return new Set(done.map(t => localDayKey(t.completedAt))).size;
-  if (c.type === 'points') return done.reduce((s, t) => s + (t.earnedPoints ?? t.points), 0);
+  if (c.type === 'points') return done.reduce((s, t) => s + (t.earnedPoints != null ? t.earnedPoints : t.points), 0);
   if (c.type === 'category') return done.filter(t => t.category === c.cat).length;
   return done.length;
 }
@@ -983,7 +983,7 @@ function renderCatalogList() {
   const doneToday = p ? tasksDoneToday(p.id) : 0;
   const atLimit = doneToday >= limit;
   const myActiveIds = new Set(
-    state.tasks.filter(t => t.assigneeId === p?.id && !t.done && !t.archived).map(t => t.templateId)
+    state.tasks.filter(t => t.assigneeId === (p && p.id) && !t.done && !t.archived).map(t => t.templateId)
   );
 
   let templates = (state.templates || []).filter(t => t.active !== false);
@@ -2061,7 +2061,7 @@ function importData() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
         showToast('Sauvegarde restaurée ✔');
         setTimeout(() => location.reload(), 600);
-      } catch {
+      } catch (e) {
         showToast('Erreur de lecture du fichier');
       }
     };
@@ -2102,16 +2102,49 @@ function switchTab(tabId, navRoot) {
 }
 
 // ---------- INIT ----------
+/** Affiche une erreur sur l'écran de démarrage au lieu de rester bloqué sur le chargement. */
+function showStartupError(err) {
+  const splash = document.querySelector('#splash .splash-content');
+  if (!splash || document.getElementById('startup-error')) return;
+  const box = document.createElement('div');
+  box.id = 'startup-error';
+  box.className = 'startup-error';
+  box.innerHTML = `<p>⚠️ Un problème est survenu au démarrage.</p>
+    <code>${escapeHtml((err && (err.message || err)) || 'Erreur inconnue')}</code>
+    <button class="btn-secondary" onclick="location.reload()">Réessayer</button>`;
+  splash.appendChild(box);
+  const loader = splash.querySelector('.loader');
+  if (loader) loader.style.display = 'none';
+}
+
+function startupStep(fn) {
+  try { fn(); } catch (e) { console.error(e); showStartupError(e); }
+}
+
+/** Safari < 14.5 ignore « gap » en flexbox : on le détecte pour activer des marges de repli. */
+function detectFlexGap() {
+  const el = document.createElement('div');
+  el.style.cssText = 'display:flex;flex-direction:column;row-gap:1px;position:absolute';
+  el.appendChild(document.createElement('div'));
+  el.appendChild(document.createElement('div'));
+  document.body.appendChild(el);
+  const ok = el.scrollHeight === 1;
+  el.remove();
+  if (!ok) document.documentElement.classList.add('no-flex-gap');
+}
+
 function init() {
-  loadState();
-  migrateProfiles();
-  checkMonthlyReset();
-  applyTheme(state.settings.theme || 'default');
+  startupStep(detectFlexGap);
+  startupStep(loadState);
+  startupStep(migrateProfiles);
+  startupStep(checkMonthlyReset);
+  startupStep(() => applyTheme(state.settings.theme || 'default'));
 
   setTimeout(() => {
+    if (document.getElementById('startup-error')) return;
     document.getElementById('splash').classList.remove('active');
     document.getElementById('profile-select').classList.add('active');
-    renderProfiles();
+    startupStep(renderProfiles);
   }, 1000);
 
   document.getElementById('btn-add-profile').addEventListener('click', openProfileModal);

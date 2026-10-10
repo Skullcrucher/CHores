@@ -358,6 +358,26 @@
 
     <div id="toast" class="toast"></div>
   </div>
+  <script>
+    // Filet de sécurité : si le script principal ne peut pas s'exécuter
+    // (navigateur trop ancien, fichier manquant), on l'affiche au lieu de charger à l'infini.
+    window.addEventListener('error', function (e) {
+      var t = e.target;
+      // Une image ou une icône qui ne charge pas ne doit pas bloquer l'app : seuls les scripts comptent.
+      if (t && t !== window && !(t.tagName === 'SCRIPT')) return;
+      var c = document.querySelector('#splash .splash-content');
+      if (!c || document.getElementById('startup-error')) return;
+      var d = document.createElement('div');
+      d.id = 'startup-error';
+      d.className = 'startup-error';
+      d.innerHTML = '<p>⚠️ Impossible de démarrer l’application.</p><code></code>' +
+        '<button class="btn-secondary" onclick="location.reload()">Réessayer</button>';
+      d.querySelector('code').textContent = (e.message || 'Erreur') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '');
+      c.appendChild(d);
+      var l = c.querySelector('.loader');
+      if (l) l.style.display = 'none';
+    }, true);
+  </script>
   <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
