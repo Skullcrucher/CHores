@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -254,7 +254,10 @@ function renderAutoBackups() {
 }
 
 // ---------- ENTREPRISE : RÈGLES ----------
-const ACTIVITY_TARGET_DAYS = 10;   // jours travaillés / mois pour toucher 100 % des intérêts
+const ACTIVITY_TARGET_DAYS = 20;   // jours travaillés / mois pour toucher 100 % des intérêts
+const INTEREST_WORK_CAP = 0.5;     // intérêts plafonnés à 50 % des points gagnés en tâches dans le mois
+const EFFICIENCY_WINDOW_DAYS = 14; // efficacité = régularité sur les 14 derniers jours…
+const EFFICIENCY_TARGET_DAYS = 12; // …12 jours actifs sur 14 = 100 % des bonus
 const MAX_YIELD_RATE = 5;          // % / mois sur la trésorerie
 const MAX_TASK_BOOST = 25;         // % bonus global max sur les tâches
 const BASE_TREASURY_CAP = 1500;
@@ -308,6 +311,43 @@ const BRANCHES = [
   { id: 'animalerie', name: 'Animalerie', emoji: '🐾', cat: 'animaux', spec: 'Bonus tâches Animaux', levels: catLevels() },
 ];
 
+/**
+ * Branche spéciale : demande d'augmentation de l'argent de poche (plafond mensuel),
+ * soumise à l'accord d'un parent. Environ 3 mois de travail quotidien dans les deux modes.
+ */
+const RAISE_MODES = {
+  progressive: {
+    label: 'Petit à petit (+1 € × 5)',
+    reqs: BRANCH_LEVELS.map(() => ({ days: 18, tasks: 50, cost: 500 })),
+    levels: BRANCH_LEVELS.map(() => ({ raise: 1 })),
+  },
+  lump: {
+    label: 'En une fois (+5 €)',
+    reqs: [{ days: 90, tasks: 250, cost: 2500 }],
+    levels: [{ raise: 5 }],
+  },
+};
+
+function raiseBranch(p) {
+  const mode = RAISE_MODES[p?.company?.raiseMode || state.settings.raiseMode] || RAISE_MODES.progressive;
+  return {
+    id: 'salaire', name: 'Direction des salaires', emoji: '🤝', special: true, noSpeed: true,
+    spec: 'Augmenter ton argent de poche (accord parent)', reqs: mode.reqs, levels: mode.levels,
+  };
+}
+
+function allBranches(p) {
+  return [raiseBranch(p), ...BRANCHES];
+}
+
+function levelReqs(b) {
+  return b.reqs || BRANCH_LEVELS;
+}
+
+function maxLevel(b) {
+  return b.levels.length;
+}
+
 /** Correspondance avec l'ancien modèle à bâtiments uniques. */
 const LEGACY_BUILDING_BRANCH = {
   atelier: 'industrie', usine: 'industrie', centrale: 'industrie', siege: 'industrie',
@@ -347,6 +387,9 @@ const JOURNAL_TYPES = {
   contract_sign:  { label: '✍️ Contrat signé',              sign: '-' },
   contract_won:   { label: '🏆 Contrat réussi',             sign: '+' },
   contract_lost:  { label: '📉 Contrat échoué',             sign: '+' },
+  raise_request:  { label: '🤝 Demande d’augmentation',     sign: '' },
+  raise_accepted: { label: '🎉 Augmentation accordée',       sign: '' },
+  raise_refused:  { label: '🙅 Augmentation refusée',        sign: '+' },
 };
 
 // ---------- ENTREPRISE : DONNÉES ----------
@@ -381,8 +424,8 @@ function daysLeftInMonth() {
   return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate() + 1;
 }
 
-function getBranch(id) {
-  return BRANCHES.find(b => b.id === id);
+function getBranch(id, p) {
+  return allBranches(p).find(b => b.id === id);
 }
 
 function ensureInvestFields(p) {
@@ -451,7 +494,7 @@ function branchEffects(b, level) {
 }
 
 function sumEffect(p, key, filter = () => true) {
-  return BRANCHES.filter(filter).reduce((s, b) => s + (branchEffects(b, branchLevel(p, b.id))[key] || 0), 0);
+  return allBranches(p).filter(filter).reduce((s, b) => s + (branchEffects(b, branchLevel(p, b.id))[key] || 0), 0);
 }
 
 function companyRate(p) {
@@ -470,8 +513,24 @@ function globalTaskBoost(p) {
   return Math.min(MAX_TASK_BOOST, sumEffect(p, 'boost'));
 }
 
-function taskBoost(p, category) {
-  return globalTaskBoost(p) + sumEffect(p, 'boostCat', b => b.cat === category);
+/**
+ * Régularité sur les 14 derniers jours. Les bonus de l'entreprise sont multipliés
+ * par cette efficacité : une tâche par semaine ne rapporte presque rien de plus.
+ */
+function efficiency(p, countToday = false) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (EFFICIENCY_WINDOW_DAYS - 1));
+  const days = new Set(state.tasks
+    .filter(t => t.assigneeId === p.id && t.done && t.completedAt && new Date(t.completedAt) >= start)
+    .map(t => localDayKey(t.completedAt)));
+  if (countToday) days.add(localDayKey(new Date()));
+  return Math.min(1, days.size / EFFICIENCY_TARGET_DAYS);
+}
+
+function taskBoost(p, category, countToday = false) {
+  const nominal = globalTaskBoost(p) + sumEffect(p, 'boostCat', b => b.cat === category);
+  return Math.round(nominal * efficiency(p, countToday));
 }
 
 function treasuryCap(p) {
@@ -492,9 +551,9 @@ function speedBonus(p) {
 
 /** Exigences du niveau `level` (1..5) d'une branche, réduction Recherche incluse. */
 function levelRequirements(p, b, level) {
-  const base = BRANCH_LEVELS[level - 1];
+  const base = levelReqs(b)[level - 1];
   return {
-    days: Math.ceil(base.days * (1 - speedBonus(p) / 100)),
+    days: b.noSpeed ? base.days : Math.ceil(base.days * (1 - speedBonus(p) / 100)),
     tasks: base.tasks,
     catTasks: b.cat ? Math.ceil(base.tasks / 2) : 0,
     cost: base.cost,
@@ -502,8 +561,8 @@ function levelRequirements(p, b, level) {
 }
 
 function companyValue(p) {
-  const built = BRANCHES.reduce((s, b) =>
-    s + BRANCH_LEVELS.slice(0, branchLevel(p, b.id)).reduce((x, l) => x + l.cost, 0), 0);
+  const built = allBranches(p).reduce((s, b) =>
+    s + levelReqs(b).slice(0, branchLevel(p, b.id)).reduce((x, l) => x + l.cost, 0), 0);
   const funded = p.company.sites.reduce((s, x) => s + (x.funded || 0), 0);
   return (p.capitalSustain || 0) + built + funded;
 }
@@ -535,13 +594,25 @@ function activityFactor(workedDays) {
   return Math.min(1, workedDays / ACTIVITY_TARGET_DAYS);
 }
 
+function taskPointsInMonth(p, month) {
+  return state.tasks
+    .filter(t => t.assigneeId === p.id && t.done && t.completedAt && monthKeyOf(t.completedAt) === month)
+    .reduce((s, t) => s + (t.earnedPoints ?? t.points), 0);
+}
+
+/** Les intérêts dépendent de l'activité et ne dépassent jamais la moitié des points gagnés en travaillant. */
 function monthlyInterest(p, month) {
   const base = Math.min(p.capitalSustain || 0, treasuryCap(p));
-  return Math.floor(base * companyRate(p) / 100 * activityFactor(workedDaysInMonth(p, month)));
+  const raw = Math.floor(base * companyRate(p) / 100 * activityFactor(workedDaysInMonth(p, month)));
+  return Math.min(raw, Math.floor(taskPointsInMonth(p, month) * INTEREST_WORK_CAP));
+}
+
+function pendingRaise(p) {
+  return (p.company.raiseRequests || []).find(r => r.status === 'pending');
 }
 
 function siteProgress(p, site) {
-  const b = getBranch(site.branch);
+  const b = getBranch(site.branch, p);
   const req = levelRequirements(p, b, site.level);
   const done = completedTasksSince(p.id, site.startedAt);
   const days = new Set(done.map(t => localDayKey(t.completedAt))).size;
@@ -806,6 +877,11 @@ function showMainAdmin() {
   renderAdminCatalog();
   renderAssignForm();
   renderAdminFamily();
+
+  const pending = state.profiles.filter(c => c.type === 'child' && c.company && pendingRaise(c));
+  if (pending.length) {
+    setTimeout(() => showToast(`🤝 ${pending.map(c => c.name).join(', ')} : demande d’augmentation (onglet Famille)`, 4000), 500);
+  }
 }
 
 function updateStatsBar() {
@@ -1004,7 +1080,7 @@ function openDifficultyModal(taskId) {
   let bonus = 0;
   if (p) {
     ensureInvestFields(p);
-    bonus = Math.round(task.points * taskBoost(p, task.category) / 100);
+    bonus = Math.round(task.points * taskBoost(p, task.category, true) / 100);
   }
   document.getElementById('diff-points').textContent = bonus ? `${task.points} + ${bonus} bonus entreprise` : task.points;
   document.querySelectorAll('.felt-btn').forEach(b => {
@@ -1027,7 +1103,7 @@ function confirmComplete() {
   }
 
   ensureInvestFields(profile);
-  const bonus = Math.round(task.points * taskBoost(profile, task.category) / 100);
+  const bonus = Math.round(task.points * taskBoost(profile, task.category, true) / 100);
   const earned = task.points + bonus;
 
   task.done = true;
@@ -1154,6 +1230,7 @@ function effectsText(e, b) {
   if (e.contracts) parts.push(`+${e.contracts} contrat/mois`);
   if (e.sites) parts.push(`+${e.sites} chantier`);
   if (e.speed) parts.push(`−${e.speed} % durée chantiers`);
+  if (e.raise) parts.push(`+${e.raise} € d’argent de poche / mois`);
   return parts.join(' · ');
 }
 
@@ -1200,7 +1277,7 @@ function companyBarHtml(p) {
   const next = COMPANY_LEVELS.find(l => l.value > value);
   const pct = next ? ((value - lvl.value) / (next.value - lvl.value)) * 100 : 100;
   const month = monthKeyOf(new Date());
-  const worked = Math.min(workedDaysInMonth(p, month), ACTIVITY_TARGET_DAYS);
+  const eff = Math.round(efficiency(p) * 100);
   return `
     <img class="bar-thumb" src="assets/img/enterprise.svg" alt="">
     <div class="bar-id">
@@ -1211,9 +1288,9 @@ function companyBarHtml(p) {
     </div>
     <div class="bar-kpis">
       <div class="kpi"><strong>${fmtRate(companyRate(p))} %</strong><span>Rendement</span></div>
-      <div class="kpi"><strong>+${globalTaskBoost(p)} %</strong><span>Bonus tâches</span></div>
+      <div class="kpi"><strong>+${Math.round(globalTaskBoost(p) * efficiency(p))} %</strong><span>Bonus tâches</span></div>
       <div class="kpi"><strong>${fmt(monthlyInterest(p, month))}</strong><span>Intérêts prévus</span></div>
-      <div class="kpi ${worked >= ACTIVITY_TARGET_DAYS ? 'good' : ''}"><strong>${worked}/${ACTIVITY_TARGET_DAYS}</strong><span>Jours actifs</span></div>
+      <div class="kpi ${eff >= 100 ? 'good' : eff < 50 ? 'bad' : ''}"><strong>${eff} %</strong><span>Efficacité</span></div>
     </div>`;
 }
 
@@ -1226,14 +1303,31 @@ function companyBranchesHtml(p) {
       <span>🏗️ Branches</span>
       <span class="hint">Chantiers ${p.company.sites.length}/${slots}${speed ? ` · −${speed} % durée` : ''} · n’avancent que les jours où tu travailles</span>
     </div>
-    <div class="branches-grid">${BRANCHES.map(b => branchCardHtml(p, b, slotsFull)).join('')}</div>`;
+    ${efficiencyHtml(p)}
+    <div class="branches-grid">${allBranches(p).map(b => branchCardHtml(p, b, slotsFull)).join('')}</div>`;
+}
+
+function efficiencyHtml(p) {
+  const eff = efficiency(p);
+  const days = Math.round(eff * EFFICIENCY_TARGET_DAYS);
+  const msg = eff >= 1
+    ? '🔥 Régularité parfaite : tous tes bonus s’appliquent à 100 % !'
+    : `Fais au moins une tâche par jour : ${days}/${EFFICIENCY_TARGET_DAYS} jours actifs sur les ${EFFICIENCY_WINDOW_DAYS} derniers. Tes bonus ne s’appliquent qu’à ${Math.round(eff * 100)} %.`;
+  return `
+    <div class="efficiency ${eff >= 1 ? 'full' : eff < 0.5 ? 'low' : ''}">
+      <strong>⚙️ Efficacité ${Math.round(eff * 100)} %</strong>
+      <div class="mb-track"><div class="mb-fill" style="width:${eff * 100}%"></div></div>
+      <span>${msg}</span>
+    </div>`;
 }
 
 function branchCardHtml(p, b, slotsFull) {
   const lvl = branchLevel(p, b.id);
   const site = p.company.sites.find(s => s.branch === b.id);
   const pr = site ? siteProgress(p, site) : null;
-  const pips = BRANCH_LEVELS.map((_, i) =>
+  const max = maxLevel(b);
+  const pending = b.special && pendingRaise(p);
+  const pips = levelReqs(b).map((_, i) =>
     `<i class="${i < lvl ? 'on' : site && i === lvl ? 'wip' : ''}"></i>`).join('');
 
   let body;
@@ -1250,7 +1344,9 @@ function branchCardHtml(p, b, slotsFull) {
         ? `<button class="btn-primary btn-block btn-compact" data-action="inaugurate" data-id="${b.id}">🎉 Inaugurer le niv. ${site.level}</button>`
         : `${pr.idleDays >= SITE_STALL_DAYS ? `<div class="mini-note warn">⚠️ À l’arrêt depuis ${pr.idleDays} j</div>` : ''}
            ${missing > 0 ? amountChips('fund', b.id, missing, p.points) : '<div class="mini-note ok">💰 Financé · continue tes tâches !</div>'}`}`;
-  } else if (lvl < MAX_BRANCH_LEVEL) {
+  } else if (pending) {
+    body = `<div class="mini-note warn">⏳ Demande de +${pending.amount} € envoyée : en attente de l’accord d’un parent</div>`;
+  } else if (lvl < max) {
     const req = levelRequirements(p, b, lvl + 1);
     body = `
       <div class="next-line">Niv. ${lvl + 1} : <strong>${effectsText(b.levels[lvl], b)}</strong></div>
@@ -1262,13 +1358,13 @@ function branchCardHtml(p, b, slotsFull) {
   }
 
   return `
-    <div class="branch-card ${site ? 'building' : ''} ${lvl === MAX_BRANCH_LEVEL ? 'maxed' : ''}">
+    <div class="branch-card ${site ? 'building' : ''} ${lvl === max ? 'maxed' : ''} ${b.special ? 'special' : ''}">
       <div class="branch-head">
         <span class="branch-emoji">${b.emoji}</span>
         <div class="branch-title"><strong>${b.name}</strong><small>${b.spec}</small></div>
         ${site && !pr.complete ? `<button class="icon-x" data-action="abandon" data-id="${b.id}" title="Abandonner le chantier">✕</button>` : ''}
       </div>
-      <div class="pips">${pips}<span>${lvl}/${MAX_BRANCH_LEVEL}</span></div>
+      <div class="pips">${pips}<span>${lvl}/${max}</span></div>
       <div class="branch-current">${lvl ? effectsText(branchEffects(b, lvl), b) : 'Pas encore développée'}</div>
       ${body}
     </div>`;
@@ -1332,6 +1428,8 @@ function companyTreasuryHtml(p) {
       ${miniBar('📅', worked, ACTIVITY_TARGET_DAYS, ' j')}
       <div class="cr-deal">Intérêts le 1er du mois : <strong>${fmt(monthlyInterest(p, month))} pts</strong>
         (activité ${Math.round(activityFactor(worked) * 100)} %)</div>
+      <div class="hint">Les intérêts ne dépassent jamais ${Math.round(INTEREST_WORK_CAP * 100)} % des points gagnés en tâches ce mois-ci
+        (${fmt(taskPointsInMonth(p, month))} pts → max ${fmt(taskPointsInMonth(p, month) * INTEREST_WORK_CAP)}).</div>
       ${capital < cap ? amountChips('deposit', '', cap - capital, p.points) : '<div class="mini-note">Trésorerie pleine : développe la 🏦 Finance.</div>'}
       <div class="hint">${sources.length ? sources.map(s => `${s.label} +${fmtRate(s.rate)} %`).join(' · ') : 'Développe l’🏭 Industrie pour gagner du rendement.'}</div>
     </div>`;
@@ -1395,10 +1493,12 @@ function renameCompany(p) {
 }
 
 function startSite(p, id) {
-  const b = getBranch(id);
+  const b = getBranch(id, p);
   if (!b) return;
   const level = branchLevel(p, id) + 1;
-  if (level > MAX_BRANCH_LEVEL || p.company.sites.some(s => s.branch === id)) return;
+  if (level > maxLevel(b) || p.company.sites.some(s => s.branch === id)) return;
+  if (b.special && pendingRaise(p)) { showToast('Attends la réponse des parents'); return; }
+  if (b.special && !p.company.raiseMode) p.company.raiseMode = state.settings.raiseMode || 'progressive';
   if (p.company.sites.length >= siteSlots(p)) { showToast('Plus d’emplacement de chantier libre'); return; }
   p.company.sites.push({ branch: id, level, startedAt: new Date().toISOString(), funded: 0 });
   logCompany(p, { type: 'site_start', amount: 0, detail: `${b.emoji} ${b.name} niv. ${level}` });
@@ -1407,7 +1507,7 @@ function startSite(p, id) {
 
 function fundSite(p, id, pts) {
   const site = p.company.sites.find(s => s.branch === id);
-  const b = getBranch(id);
+  const b = getBranch(id, p);
   if (!site || !b) return;
   const amount = Math.min(pts, levelRequirements(p, b, site.level).cost - (site.funded || 0), p.points || 0);
   if (amount <= 0) { showToast('Pas assez de points !'); return; }
@@ -1419,14 +1519,20 @@ function fundSite(p, id, pts) {
 
 function inaugurate(p, id) {
   const site = p.company.sites.find(s => s.branch === id);
-  const b = getBranch(id);
+  const b = getBranch(id, p);
   if (!site || !b || !siteProgress(p, site).complete) return;
   const before = companyLevel(p);
   p.company.sites = p.company.sites.filter(s => s !== site);
   p.company.branches[id] = site.level;
   logCompany(p, { type: 'inaugurate', amount: 0, detail: `${b.emoji} ${b.name} niv. ${site.level}` });
+  if (b.special) {
+    const amount = b.levels[site.level - 1].raise;
+    p.company.raiseRequests = p.company.raiseRequests || [];
+    p.company.raiseRequests.push({ id: 'r_' + Date.now(), level: site.level, amount, cost: site.funded || 0, date: new Date().toISOString(), status: 'pending' });
+    logCompany(p, { type: 'raise_request', amount: 0, detail: `+${amount} € / mois` });
+  }
   commitCompany();
-  showToast(`🎉 ${b.name} passe au niveau ${site.level} !`, 3500);
+  showToast(b.special ? `🤝 Demande d’augmentation envoyée aux parents !` : `🎉 ${b.name} passe au niveau ${site.level} !`, 3500);
   const after = companyLevel(p);
   if (after.level > before.level) {
     setTimeout(() => showToast(`${after.emoji} Ton entreprise devient : ${after.name} !`, 3500), 3000);
@@ -1435,7 +1541,7 @@ function inaugurate(p, id) {
 
 function abandonSite(p, id) {
   const site = p.company.sites.find(s => s.branch === id);
-  const b = getBranch(id);
+  const b = getBranch(id, p);
   if (!site || !b) return;
   const refund = Math.floor((site.funded || 0) * SITE_ABANDON_REFUND);
   if (!confirm(`Abandonner le chantier ${b.name} niv. ${site.level} ?\n\nToute la progression sera perdue et tu ne récupères que ${refund} pts (${Math.round(SITE_ABANDON_REFUND * 100)} % du financement).`)) return;
@@ -1675,7 +1781,17 @@ function renderAdminFamily() {
   list.innerHTML = state.profiles.map(p => {
     const isParent = p.type === 'parent';
     if (!isParent) ensureInvestFields(p);
-    return `
+    const req = !isParent && pendingRaise(p);
+    const raiseHtml = req ? `
+      <div class="raise-request">
+        <span>🤝 <strong>${p.name}</strong> demande <strong>+${req.amount} €</strong> d’argent de poche / mois
+          (plafond ${p.ceiling || 20} € → ${(p.ceiling || 20) + req.amount} €)</span>
+        <div class="chips">
+          <button class="chip strong" data-raise="accept" data-child="${p.id}">Accepter</button>
+          <button class="chip" data-raise="refuse" data-child="${p.id}">Refuser (points rendus)</button>
+        </div>
+      </div>` : '';
+    return `${raiseHtml}
       <div class="family-card">
         <img src="${avatarSVG(p.avatar, 48)}" alt="">
         <div class="info">
@@ -1683,11 +1799,33 @@ function renderAdminFamily() {
           <div class="fmeta">
             ${isParent
               ? 'Parent · Admin'
-              : `Niv. ${p.level || 1} · ${p.points || 0} pts · ${formatMoney(p.wallet || 0)} · ${p.tasksDone || 0} tâches · ${companyLevel(p).emoji} ${companyLevel(p).name} (${BRANCHES.reduce((s, b) => s + branchLevel(p, b.id), 0)} niv.)`}
+              : `Niv. ${p.level || 1} · ${p.points || 0} pts · ${formatMoney(p.wallet || 0)} (plafond ${p.ceiling || 20} €) · ${p.tasksDone || 0} tâches · ${companyLevel(p).emoji} ${companyLevel(p).name} · ⚙️ ${Math.round(efficiency(p) * 100)} %`}
           </div>
         </div>
       </div>`;
   }).join('');
+}
+
+function answerRaise(childId, accept) {
+  const p = state.profiles.find(x => x.id === childId);
+  if (!p) return;
+  ensureInvestFields(p);
+  const req = pendingRaise(p);
+  if (!req) return;
+  if (accept) {
+    req.status = 'accepted';
+    p.ceiling = (p.ceiling || 20) + req.amount;
+    logCompany(p, { type: 'raise_accepted', amount: 0, detail: `Plafond ${p.ceiling} € / mois` });
+    showToast(`Augmentation accordée à ${p.name} 🎉`);
+  } else {
+    req.status = 'refused';
+    p.company.branches.salaire = Math.max(0, branchLevel(p, 'salaire') - 1);
+    p.points = (p.points || 0) + (req.cost || 0);
+    logCompany(p, { type: 'raise_refused', amount: req.cost || 0, detail: 'Points rendus' });
+    showToast(`Demande de ${p.name} refusée, points rendus`);
+  }
+  saveState();
+  renderAdminFamily();
 }
 
 // ---------- TEMPLATE MODAL ----------
@@ -1856,6 +1994,7 @@ function openSettings() {
   document.getElementById('rate-input').value = state.settings.rate;
   const dailyInput = document.getElementById('daily-limit-input');
   if (dailyInput) dailyInput.value = state.settings.dailyTaskLimit || 3;
+  document.getElementById('raise-mode-input').value = state.settings.raiseMode || 'progressive';
   renderThemes();
   renderAutoBackups();
   openModal('modal-settings');
@@ -2010,6 +2149,16 @@ function init() {
       showToast('Limite journalière mise à jour');
     });
   }
+
+  document.getElementById('raise-mode-input').addEventListener('change', e => {
+    state.settings.raiseMode = e.target.value;
+    saveState();
+    showToast('Mode d’augmentation mis à jour');
+  });
+  document.getElementById('admin-family-list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-raise]');
+    if (btn) answerRaise(btn.dataset.child, btn.dataset.raise === 'accept');
+  });
 
   document.getElementById('btn-add-template').addEventListener('click', () => openTemplateModal());
   document.getElementById('btn-save-template').addEventListener('click', saveTemplate);
