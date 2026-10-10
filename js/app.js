@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.3.1';
+const APP_VERSION = '3.3.2';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -2121,7 +2121,20 @@ function startupStep(fn) {
   try { fn(); } catch (e) { console.error(e); showStartupError(e); }
 }
 
+/** Safari < 14.5 ignore « gap » en flexbox : on le détecte pour activer des marges de repli. */
+function detectFlexGap() {
+  const el = document.createElement('div');
+  el.style.cssText = 'display:flex;flex-direction:column;row-gap:1px;position:absolute';
+  el.appendChild(document.createElement('div'));
+  el.appendChild(document.createElement('div'));
+  document.body.appendChild(el);
+  const ok = el.scrollHeight === 1;
+  el.remove();
+  if (!ok) document.documentElement.classList.add('no-flex-gap');
+}
+
 function init() {
+  startupStep(detectFlexGap);
   startupStep(loadState);
   startupStep(migrateProfiles);
   startupStep(checkMonthlyReset);
