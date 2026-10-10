@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160" fill="none">
+  <defs>
+    <linearGradient id="tg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FEF3C7"/>
+      <stop offset="100%" stop-color="#FDE68A"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="160" rx="16" fill="url(#tg)"/>
+  <!-- rocket / boost -->
+  <g transform="translate(40,30)">
+    <ellipse cx="45" cy="100" rx="20" ry="8" fill="#F97316" opacity="0.4"/>
+    <path d="M45 15 L60 70 L50 70 L55 95 L35 95 L40 70 L30 70 Z" fill="#EF4444"/>
+    <path d="M45 15 L55 55 L35 55 Z" fill="#F87171"/>
+    <circle cx="45" cy="40" r="8" fill="#FEF3C7"/>
+    <circle cx="45" cy="40" r="5" fill="#38BDF8"/>
+    <!-- flames -->
+    <path d="M35 95 Q40 110 45 95 Q50 110 55 95" fill="#FBBF24"/>
+    <path d="M38 95 Q42 105 45 95 Q48 105 52 95" fill="#F97316"/>
+  </g>
+  <!-- big lightning -->
+  <g transform="translate(160,20)">
+    <path d="M70 5 L35 70 L55 70 L40 130 L95 55 L70 55 Z" fill="url(#bolt)" stroke="#B45309" stroke-width="2"/>
+  </g>
+  <!-- hourglass small -->
+  <g transform="translate(250,90)">
+    <path d="M10 5 H40 L30 30 L40 55 H10 L20 30 Z" fill="none" stroke="#92400E" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M15 10 H35 L28 28 H22 Z" fill="#FBBF24" opacity="0.8"/>
+    <path d="M22 32 H28 L35 50 H15 Z" fill="#F59E0B" opacity="0.6"/>
+  </g>
+  <!-- sparkles -->
+  <circle cx="130" cy="40" r="3" fill="#F59E0B"/>
+  <circle cx="145" cy="55" r="2" fill="#FBBF24"/>
+  <circle cx="120" cy="60" r="2.5" fill="#F97316"/>
+  <rect y="145" width="320" height="15" fill="#B45309" opacity="0.25"/>
+</svg>

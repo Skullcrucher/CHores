@@ -1,10 +1,13 @@
-const CACHE = 'chores-v3';
+const CACHE = 'chores-v3.1';
 const ASSETS = [
   './',
   './index.html',
   './css/style.css',
   './js/app.js',
-  './manifest.json'
+  './manifest.json',
+  './assets/img/enterprise.svg',
+  './assets/img/sustainable.svg',
+  './assets/img/temporary.svg'
 ];
 
 self.addEventListener('install', e => {

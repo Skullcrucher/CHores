@@ -269,10 +269,20 @@ html, body {
 .invest-desc { color: var(--text-muted); margin-bottom: 1rem; line-height: 1.4; }
 .invest-stats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
-  margin-bottom: 1.2rem; text-align: center;
+  margin-bottom: 0.4rem; text-align: center;
 }
 .big-number { display: block; font-size: 1.8rem; font-weight: 800; color: var(--primary); }
 .invest-stats span:last-child { font-size: 0.8rem; color: var(--text-muted); }
+.invest-hero-img {
+  width: 100%; height: auto; border-radius: 12px;
+  margin-bottom: 1rem; display: block;
+}
+.invest-card-img {
+  width: 100%; height: auto; border-radius: 12px;
+  margin-bottom: 0.9rem; display: block;
+  max-height: 140px; object-fit: cover;
+}
+.invest-hero h3 { margin-bottom: 0.5rem; }
 
 .level-card { text-align: center; }
 .level-circle {
