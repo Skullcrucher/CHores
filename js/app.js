@@ -6,9 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.0.0';
-const MAX_INFRA_LEVEL = 25;
-const RATE_PER_LEVEL = 0.2; // 0.2% per level → 5% at level 25
+const APP_VERSION = '3.1.0';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -255,36 +253,345 @@ function renderAutoBackups() {
   });
 }
 
-// ---------- INVEST HELPERS ----------
-function infraRate(level) {
-  return Math.min(5, (level || 0) * RATE_PER_LEVEL);
+// ---------- ENTREPRISE : RÈGLES ----------
+const ACTIVITY_TARGET_DAYS = 10;   // jours travaillés / mois pour toucher 100 % des intérêts
+const MAX_YIELD_RATE = 5;          // % / mois sur la trésorerie
+const MAX_TASK_BOOST = 25;         // % bonus global max sur les tâches
+const BASE_TREASURY_CAP = 1500;
+const CONTRACT_MIN_STAKE = 20;
+const CONTRACT_FAIL_REFUND = 0.75;
+const SITE_ABANDON_REFUND = 0.5;
+const SITE_STALL_DAYS = 3;
+const MAX_INVEST_HISTORY = 200;
+
+const COMPANY_LEVELS = [
+  { level: 1, value: 0,     name: 'Auto-entrepreneur', emoji: '🛖', maxStake: 100 },
+  { level: 2, value: 500,   name: 'Start-up',          emoji: '🚀', maxStake: 200 },
+  { level: 3, value: 2000,  name: 'PME',               emoji: '🏢', maxStake: 350 },
+  { level: 4, value: 6000,  name: 'Grand groupe',      emoji: '🏛️', maxStake: 600 },
+  { level: 5, value: 15000, name: 'Multinationale',    emoji: '🌍', maxStake: 900 },
+  { level: 6, value: 30000, name: 'Empire',            emoji: '👑', maxStake: 1300 },
+];
+
+/**
+ * Bâtiments durables. Un chantier n'avance que les jours où l'enfant
+ * travaille (au moins une tâche validée) : `days` = jours de travail réels.
+ */
+const BUILDINGS = [
+  { id: 'atelier', name: 'Atelier', emoji: '🔧', days: 20, tasks: 30, cost: 300, requires: [],
+    effects: { rate: 0.5 }, desc: 'Ton premier local. Les fondations de ton entreprise.' },
+  { id: 'boutique', name: 'Boutique', emoji: '🏪', days: 30, tasks: 45, cost: 500, requires: ['atelier'],
+    effects: { boost: 5 }, desc: 'Une vitrine sur la rue : chaque tâche rapporte plus.' },
+  { id: 'entrepot', name: 'Entrepôt', emoji: '📦', days: 45, tasks: 65, cost: 700, requires: ['atelier'],
+    effects: { rate: 0.5, cap: 2000, contracts: 1 }, desc: 'De la place pour stocker et prendre plus de commandes.' },
+  { id: 'cuisine_centrale', name: 'Cuisine centrale', emoji: '🍳', days: 30, tasks: 45, cat: 'cuisine', catTasks: 20, cost: 450,
+    requires: ['boutique'], effects: { boostCat: 15 }, desc: 'Spécialise-toi dans la cuisine.' },
+  { id: 'agence_nettoyage', name: 'Agence de nettoyage', emoji: '🧽', days: 30, tasks: 45, cat: 'menage', catTasks: 20, cost: 450,
+    requires: ['boutique'], effects: { boostCat: 15 }, desc: 'Spécialise-toi dans le ménage.' },
+  { id: 'blanchisserie', name: 'Blanchisserie', emoji: '🧺', days: 30, tasks: 45, cat: 'linge', catTasks: 20, cost: 450,
+    requires: ['boutique'], effects: { boostCat: 15 }, desc: 'Spécialise-toi dans le linge.' },
+  { id: 'jardinerie', name: 'Jardinerie', emoji: '🌻', days: 30, tasks: 45, cat: 'exterieur', catTasks: 15, cost: 450,
+    requires: ['boutique'], effects: { boostCat: 15 }, desc: 'Spécialise-toi dans l’extérieur.' },
+  { id: 'clinique_veto', name: 'Clinique vétérinaire', emoji: '🐾', days: 30, tasks: 45, cat: 'animaux', catTasks: 15, cost: 450,
+    requires: ['boutique'], effects: { boostCat: 15 }, desc: 'Spécialise-toi dans les animaux.' },
+  { id: 'usine', name: 'Usine', emoji: '🏭', days: 75, tasks: 110, cost: 1200, requires: ['boutique', 'entrepot'],
+    effects: { rate: 1 }, desc: 'La production à grande échelle. Un vrai cap.' },
+  { id: 'banque', name: 'Banque', emoji: '🏦', days: 100, tasks: 150, cost: 1800, requires: ['usine'],
+    effects: { rate: 1, cap: 5000, contracts: 1 }, desc: 'Ta propre banque : plus de trésorerie, plus de contrats.' },
+  { id: 'labo', name: 'Centre de R&D', emoji: '🔬', days: 120, tasks: 180, cost: 2000, requires: ['usine'],
+    effects: { boost: 5, sites: 1 }, desc: 'L’innovation permet de mener un chantier de plus en parallèle.' },
+  { id: 'centrale', name: 'Centrale solaire', emoji: '☀️', days: 150, tasks: 220, cost: 2500, requires: ['banque'],
+    effects: { rate: 1, boost: 5 }, desc: 'Une énergie propre et durable pour tout ton empire.' },
+  { id: 'siege', name: 'Siège social', emoji: '🏙️', days: 240, tasks: 360, cost: 4000, requires: ['centrale', 'labo'],
+    effects: { rate: 1, boost: 10, cap: 10000 }, desc: 'Le gratte-ciel légendaire. Environ un an de travail acharné.' },
+];
+
+const CONTRACT_TIERS = [
+  { name: 'Facile',    emoji: '🟢', pct: 10 },
+  { name: 'Ambitieux', emoji: '🟠', pct: 20 },
+  { name: 'Défi',      emoji: '🔴', pct: 35 },
+];
+
+const CONTRACT_TYPES = {
+  tasks:    { goals: [12, 25, 40],    label: (n) => `Réaliser ${n} tâches` },
+  days:     { goals: [6, 12, 18],     label: (n) => `Travailler ${n} jours différents` },
+  points:   { goals: [150, 350, 600], label: (n) => `Gagner ${n} points en tâches` },
+  category: { goals: [5, 10, 18],     label: (n, cat) => `Réaliser ${n} tâches ${CATEGORY_LABELS[cat] || cat}` },
+};
+
+const CONTRACT_CLIENTS = [
+  'Mme Dupont', 'La boulangerie du coin', 'La mairie', 'Société Durand', 'Le club de foot',
+  'M. Martin', 'L’hôtel des Lilas', 'La crèche', 'Le garage Moreau', 'La pharmacie',
+];
+
+const JOURNAL_TYPES = {
+  interest:       { label: '📈 Intérêts mensuels',          sign: '+' },
+  temp_return:    { label: '↩️ Capital temporaire rendu',   sign: '+' },
+  upgrade:        { label: '⬆️ Amélioration infra',         sign: '-' },
+  invest_sustain: { label: '🏦 Placement en trésorerie',    sign: '-' },
+  invest_temp:    { label: '⚡ Placement temporaire',        sign: '-' },
+  site_start:     { label: '🏗️ Chantier lancé',             sign: '' },
+  site_fund:      { label: '💰 Financement chantier',       sign: '-' },
+  site_abandon:   { label: '🚧 Chantier abandonné',         sign: '+' },
+  inaugurate:     { label: '🎉 Inauguration',               sign: '' },
+  contract_sign:  { label: '✍️ Contrat signé',              sign: '-' },
+  contract_won:   { label: '🏆 Contrat réussi',             sign: '+' },
+  contract_lost:  { label: '📉 Contrat échoué',             sign: '+' },
+};
+
+let companyView = 'sites';
+
+// ---------- ENTREPRISE : DONNÉES ----------
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function upgradeCost(level, isTemp) {
-  // Coût croissant : très cher d'atteindre le niveau 25
-  const base = isTemp ? 40 : 50;
-  const lvl = level || 0;
-  return Math.floor(base * Math.pow(lvl + 1, 1.8));
+function fmt(n) {
+  return Math.floor(n || 0).toLocaleString('fr-FR');
+}
+
+function fmtRate(r) {
+  return (Math.round(r * 100) / 100).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+}
+
+function localDayKey(d) {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+
+function monthKeyOf(d) {
+  return localDayKey(d).slice(0, 7);
+}
+
+function monthLabel(month) {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+}
+
+function daysLeftInMonth() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate() + 1;
+}
+
+function getBuilding(id) {
+  return BUILDINGS.find(b => b.id === id);
 }
 
 function ensureInvestFields(p) {
   if (p.capitalSustain == null) p.capitalSustain = 0;
-  if (p.capitalTemp == null) p.capitalTemp = 0;
-  if (p.infraSustain == null) p.infraSustain = 0;
-  if (p.infraTemp == null) p.infraTemp = 0;
   if (!p.investHistory) p.investHistory = [];
   // Migration ancienne version
   if (p.investedPoints && !p.capitalSustain) {
     p.capitalSustain = p.investedPoints;
     p.investedPoints = 0;
   }
+  if (!p.company) {
+    // Migration v3.0 : les niveaux d'infra durable deviennent un rendement acquis,
+    // le capital temporaire est rendu.
+    p.company = {
+      name: `Entreprise de ${p.name}`,
+      buildings: [],
+      sites: [],
+      contracts: [],
+      legacyRate: Math.min(MAX_YIELD_RATE, (p.infraSustain || 0) * 0.2),
+      legacyCap: p.capitalSustain || 0,
+    };
+    if (p.capitalTemp > 0) {
+      p.points = (p.points || 0) + p.capitalTemp;
+      logCompany(p, { type: 'temp_return', amount: p.capitalTemp, detail: 'Nouvelle version de l’entreprise' });
+    }
+    delete p.capitalTemp;
+    delete p.infraTemp;
+    delete p.infraSustain;
+  }
 }
 
-function estimatedMonthlyInterest(p) {
-  ensureInvestFields(p);
-  const rS = infraRate(p.infraSustain) / 100;
-  const rT = infraRate(p.infraTemp) / 100;
-  return Math.floor(p.capitalSustain * rS + p.capitalTemp * rT);
+function logCompany(p, entry) {
+  p.investHistory.unshift({ date: new Date().toISOString(), ...entry });
+  p.investHistory = p.investHistory.slice(0, MAX_INVEST_HISTORY);
+}
+
+function builtIds(p) {
+  return new Set(p.company.buildings.map(b => b.id));
+}
+
+function builtBuildings(p) {
+  return p.company.buildings.map(b => getBuilding(b.id)).filter(Boolean);
+}
+
+function sumEffect(p, key) {
+  return builtBuildings(p).reduce((s, b) => s + (b.effects[key] || 0), 0);
+}
+
+function companyRate(p) {
+  return Math.min(MAX_YIELD_RATE, (p.company.legacyRate || 0) + sumEffect(p, 'rate'));
+}
+
+function companyRateSources(p) {
+  const sources = builtBuildings(p)
+    .filter(b => b.effects.rate)
+    .map(b => ({ label: `${b.emoji} ${b.name}`, rate: b.effects.rate }));
+  if (p.company.legacyRate) sources.unshift({ label: '🏚️ Anciennes infrastructures', rate: p.company.legacyRate });
+  return sources;
+}
+
+function globalTaskBoost(p) {
+  return Math.min(MAX_TASK_BOOST, sumEffect(p, 'boost'));
+}
+
+function taskBoost(p, category) {
+  const cat = builtBuildings(p)
+    .filter(b => b.cat === category && b.effects.boostCat)
+    .reduce((s, b) => s + b.effects.boostCat, 0);
+  return globalTaskBoost(p) + cat;
+}
+
+function treasuryCap(p) {
+  return Math.max(BASE_TREASURY_CAP, p.company.legacyCap || 0) + sumEffect(p, 'cap');
+}
+
+function contractSlots(p) {
+  return 1 + sumEffect(p, 'contracts');
+}
+
+function siteSlots(p) {
+  return 1 + (companyLevel(p).level >= 3 ? 1 : 0) + sumEffect(p, 'sites');
+}
+
+function companyValue(p) {
+  const built = builtBuildings(p).reduce((s, b) => s + b.cost, 0);
+  const funded = p.company.sites.reduce((s, x) => s + (x.funded || 0), 0);
+  return (p.capitalSustain || 0) + built + funded;
+}
+
+function companyLevel(p) {
+  const value = companyValue(p);
+  let lvl = COMPANY_LEVELS[0];
+  for (const l of COMPANY_LEVELS) if (value >= l.value) lvl = l;
+  return lvl;
+}
+
+function completedTasksSince(profileId, sinceIso) {
+  const since = new Date(sinceIso).getTime();
+  return state.tasks.filter(t =>
+    t.assigneeId === profileId && t.done && t.completedAt && new Date(t.completedAt).getTime() >= since
+  );
+}
+
+function workedDaysInMonth(p, month) {
+  const days = new Set(
+    state.tasks
+      .filter(t => t.assigneeId === p.id && t.done && t.completedAt && monthKeyOf(t.completedAt) === month)
+      .map(t => localDayKey(t.completedAt))
+  );
+  return days.size;
+}
+
+function activityFactor(workedDays) {
+  return Math.min(1, workedDays / ACTIVITY_TARGET_DAYS);
+}
+
+function monthlyInterest(p, month) {
+  const base = Math.min(p.capitalSustain || 0, treasuryCap(p));
+  return Math.floor(base * companyRate(p) / 100 * activityFactor(workedDaysInMonth(p, month)));
+}
+
+function siteProgress(p, site) {
+  const b = getBuilding(site.id);
+  const done = completedTasksSince(p.id, site.startedAt);
+  const days = new Set(done.map(t => localDayKey(t.completedAt))).size;
+  const catTasks = b.cat ? done.filter(t => t.category === b.cat).length : 0;
+  const lastWork = done.reduce((m, t) => Math.max(m, new Date(t.completedAt).getTime()), new Date(site.startedAt).getTime());
+  const idleDays = Math.floor((Date.now() - lastWork) / 86400000);
+  const complete = days >= b.days && done.length >= b.tasks
+    && (!b.cat || catTasks >= b.catTasks) && (site.funded || 0) >= b.cost;
+  return { days, tasks: done.length, catTasks, idleDays, complete };
+}
+
+/** PRNG déterministe : mêmes offres pour un enfant donné pendant tout le mois. */
+function seededRandom(seed) {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function monthlyOffers(p, month) {
+  const rand = seededRandom(p.id + '|' + month);
+  const cats = [...new Set((state.templates || []).filter(t => t.active !== false).map(t => t.category))];
+  const types = Object.keys(CONTRACT_TYPES).filter(k => k !== 'category' || cats.length);
+  return CONTRACT_TIERS.map((tier, i) => {
+    const type = types[Math.floor(rand() * types.length)];
+    const cat = type === 'category' ? cats[Math.floor(rand() * cats.length)] : null;
+    const client = CONTRACT_CLIENTS[Math.floor(rand() * CONTRACT_CLIENTS.length)];
+    return { offerId: `${month}_${i}`, month, tier: i, type, cat, goal: CONTRACT_TYPES[type].goals[i], pct: tier.pct, client };
+  });
+}
+
+function contractLabel(c) {
+  return CONTRACT_TYPES[c.type].label(c.goal, c.cat);
+}
+
+function contractProgress(p, c) {
+  const done = completedTasksSince(p.id, c.signedAt).filter(t => monthKeyOf(t.completedAt) === c.month);
+  if (c.type === 'days') return new Set(done.map(t => localDayKey(t.completedAt))).size;
+  if (c.type === 'points') return done.reduce((s, t) => s + (t.earnedPoints ?? t.points), 0);
+  if (c.type === 'category') return done.filter(t => t.category === c.cat).length;
+  return done.length;
+}
+
+function contractReward(c) {
+  return Math.floor(c.stake * c.pct / 100);
+}
+
+function contractsThisMonth(p) {
+  const month = monthKeyOf(new Date());
+  return p.company.contracts.filter(c => c.month === month);
+}
+
+function payContract(p, c) {
+  const reward = contractReward(c);
+  c.status = 'won';
+  p.points = (p.points || 0) + c.stake + reward;
+  p.pointsTotal = (p.pointsTotal || 0) + reward;
+  logCompany(p, { type: 'contract_won', amount: c.stake + reward, detail: `${c.client} · prime +${reward}` });
+}
+
+/** Clôture les contrats des mois précédents. */
+function settleContracts(p, currentMonth) {
+  p.company.contracts.forEach(c => {
+    if (c.status !== 'active' || c.month >= currentMonth) return;
+    if (contractProgress(p, c) >= c.goal) {
+      payContract(p, c);
+    } else {
+      const refund = Math.floor(c.stake * CONTRACT_FAIL_REFUND);
+      c.status = 'lost';
+      p.points = (p.points || 0) + refund;
+      logCompany(p, { type: 'contract_lost', amount: refund, detail: `${c.client} · ${Math.round(CONTRACT_FAIL_REFUND * 100)} % de la mise rendue` });
+    }
+  });
+  // On ne garde que l'historique récent
+  p.company.contracts = p.company.contracts.filter(c => c.status === 'active' || c.month >= currentMonth).slice(-30);
+}
+
+function payMonthlyInterest(p, month) {
+  const worked = workedDaysInMonth(p, month);
+  const interest = monthlyInterest(p, month);
+  if (interest <= 0) return;
+  p.points = (p.points || 0) + interest;
+  p.pointsTotal = (p.pointsTotal || 0) + interest;
+  logCompany(p, {
+    type: 'interest', amount: interest,
+    detail: `${fmtRate(companyRate(p))} % · activité ${Math.min(worked, ACTIVITY_TARGET_DAYS)}/${ACTIVITY_TARGET_DAYS} j`
+  });
 }
 
 function todayKey() {
@@ -299,11 +606,17 @@ function tasksDoneToday(profileId) {
   ).length;
 }
 
+function migrateProfiles() {
+  const before = JSON.stringify(state.profiles);
+  state.profiles.filter(p => p.type === 'child').forEach(ensureInvestFields);
+  if (JSON.stringify(state.profiles) !== before) saveState();
+}
+
 // ---------- MONTHLY ----------
 function checkMonthlyReset() {
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const currentMonth = monthKeyOf(new Date());
   if (state.lastMonthCheck === currentMonth) return;
+  const previousMonth = state.lastMonthCheck;
 
   state.profiles.forEach(p => {
     if (p.type !== 'child') {
@@ -311,29 +624,8 @@ function checkMonthlyReset() {
       return;
     }
     ensureInvestFields(p);
-    const interest = estimatedMonthlyInterest(p);
-    if (interest > 0) {
-      p.points = (p.points || 0) + interest;
-      p.pointsTotal = (p.pointsTotal || 0) + interest;
-      p.investHistory.unshift({
-        date: new Date().toISOString(),
-        amount: interest,
-        type: 'interest',
-        detail: `Durable ${infraRate(p.infraSustain)}% + Temp ${infraRate(p.infraTemp)}%`
-      });
-    }
-    // Réinitialisation infrastructures temporaires : capital rendu, niveau à 0
-    if (p.capitalTemp > 0) {
-      p.points = (p.points || 0) + p.capitalTemp;
-      p.investHistory.unshift({
-        date: new Date().toISOString(),
-        amount: p.capitalTemp,
-        type: 'temp_return',
-        detail: 'Capital temporaire rendu'
-      });
-      p.capitalTemp = 0;
-    }
-    p.infraTemp = 0;
+    settleContracts(p, currentMonth);
+    if (previousMonth) payMonthlyInterest(p, previousMonth);
     p.convertedThisMonth = 0;
   });
   state.lastMonthCheck = currentMonth;
@@ -451,7 +743,7 @@ function showMainChild() {
   updateStatsBar();
   renderChildTasks();
   renderWallet();
-  renderInvest();
+  renderCompany();
   renderProgress();
 }
 
@@ -478,7 +770,7 @@ function updateStatsBar() {
   document.getElementById('stat-points').textContent = p.points || 0;
   document.getElementById('stat-wallet').textContent = formatMoney(p.wallet || 0);
   document.getElementById('stat-level').textContent = p.level || 1;
-  document.getElementById('stat-invest').textContent = (p.capitalSustain || 0) + (p.capitalTemp || 0);
+  document.getElementById('stat-invest').textContent = p.type === 'child' ? fmt(investedTotal(p)) : 0;
 }
 
 function backToProfiles() {
@@ -664,7 +956,12 @@ function openDifficultyModal(taskId) {
   pendingCompleteTaskId = taskId;
   selectedFelt = 2;
   document.getElementById('diff-task-name').textContent = task.name;
-  document.getElementById('diff-points').textContent = task.points;
+  let bonus = 0;
+  if (p) {
+    ensureInvestFields(p);
+    bonus = Math.round(task.points * taskBoost(p, task.category) / 100);
+  }
+  document.getElementById('diff-points').textContent = bonus ? `${task.points} + ${bonus} bonus entreprise` : task.points;
   document.querySelectorAll('.felt-btn').forEach(b => {
     b.classList.toggle('active', parseInt(b.dataset.felt) === 2);
   });
@@ -684,14 +981,20 @@ function confirmComplete() {
     return;
   }
 
+  ensureInvestFields(profile);
+  const bonus = Math.round(task.points * taskBoost(profile, task.category) / 100);
+  const earned = task.points + bonus;
+
   task.done = true;
   task.completedAt = new Date().toISOString();
   task.feltDifficulty = selectedFelt;
+  task.bonusPoints = bonus;
+  task.earnedPoints = earned;
 
-  profile.points = (profile.points || 0) + task.points;
-  profile.pointsTotal = (profile.pointsTotal || 0) + task.points;
+  profile.points = (profile.points || 0) + earned;
+  profile.pointsTotal = (profile.pointsTotal || 0) + earned;
   profile.tasksDone = (profile.tasksDone || 0) + 1;
-  profile.xp = (profile.xp || 0) + task.points;
+  profile.xp = (profile.xp || 0) + earned;
 
   let leveled = false;
   while (profile.xp >= xpForLevel((profile.level || 1) + 1)) {
@@ -707,6 +1010,8 @@ function confirmComplete() {
       done: false,
       completedAt: null,
       feltDifficulty: null,
+      bonusPoints: null,
+      earnedPoints: null,
       archived: false,
       createdAt: new Date().toISOString(),
     });
@@ -718,7 +1023,7 @@ function confirmComplete() {
   updateStatsBar();
   renderProgress();
 
-  showToast(`+${task.points} points ! 🎉`);
+  showToast(bonus ? `+${earned} points (dont 🏢 +${bonus}) ! 🎉` : `+${earned} points ! 🎉`);
   if (leveled) {
     setTimeout(() => {
       const title = getTitleForLevel(profile.level);
@@ -794,137 +1099,459 @@ function convertPoints() {
   showToast(`+${formatMoney(amount)} 💰`);
 }
 
-function renderInvest() {
+// ---------- ENTREPRISE : UI ----------
+function effectText(b) {
+  const e = b.effects;
+  const parts = [];
+  if (e.rate) parts.push(`📈 +${fmtRate(e.rate)} % rendement`);
+  if (e.boost) parts.push(`🚀 +${e.boost} % points sur toutes les tâches`);
+  if (e.boostCat) parts.push(`🎯 +${e.boostCat} % points ${CATEGORY_LABELS[b.cat] || ''}`);
+  if (e.cap) parts.push(`🏦 +${fmt(e.cap)} trésorerie max`);
+  if (e.contracts) parts.push(`📜 +${e.contracts} contrat / mois`);
+  if (e.sites) parts.push(`🏗️ +${e.sites} chantier en parallèle`);
+  return parts.join(' · ');
+}
+
+function progressRow(icon, label, value, goal, unit = '') {
+  const pct = Math.min(100, goal ? (value / goal) * 100 : 100);
+  const ok = value >= goal;
+  return `
+    <div class="prog-row ${ok ? 'ok' : ''}">
+      <div class="prog-head"><span>${icon} ${label}</span><span>${fmt(Math.min(value, goal))} / ${fmt(goal)}${unit} ${ok ? '✔' : ''}</span></div>
+      <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
+    </div>`;
+}
+
+function renderCompany() {
   const p = getCurrentProfile();
-  if (!p) return;
+  if (!p || p.type !== 'child') return;
   ensureInvestFields(p);
 
-  const rS = infraRate(p.infraSustain);
-  const rT = infraRate(p.infraTemp);
-  const totalRate = rS + rT;
-  const monthly = estimatedMonthlyInterest(p);
+  renderCompanyHero(p);
+  renderCompanyKpis(p);
+  document.querySelectorAll('#company-views .seg-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.id === companyView);
+  });
+  const view = document.getElementById('company-view');
+  if (companyView === 'contracts') view.innerHTML = companyContractsHtml(p);
+  else if (companyView === 'treasury') view.innerHTML = companyTreasuryHtml(p);
+  else if (companyView === 'journal') view.innerHTML = companyJournalHtml(p);
+  else view.innerHTML = companySitesHtml(p);
 
-  document.getElementById('invest-rate-total').textContent = totalRate.toFixed(1) + ' %';
-  document.getElementById('invest-monthly').textContent = monthly;
-  document.getElementById('rate-sustain').textContent = `${rS.toFixed(1)} % / 5 %`;
-  document.getElementById('rate-temp').textContent = `${rT.toFixed(1)} % / 5 %`;
-  document.getElementById('cap-sustain').textContent = (p.capitalSustain || 0) + ' pts';
-  document.getElementById('cap-temp').textContent = (p.capitalTemp || 0) + ' pts';
-  document.getElementById('lvl-sustain').textContent = `${p.infraSustain || 0} / ${MAX_INFRA_LEVEL}`;
-  document.getElementById('lvl-temp').textContent = `${p.infraTemp || 0} / ${MAX_INFRA_LEVEL}`;
-  document.getElementById('bar-sustain').style.width = ((p.infraSustain || 0) / MAX_INFRA_LEVEL * 100) + '%';
-  document.getElementById('bar-temp').style.width = ((p.infraTemp || 0) / MAX_INFRA_LEVEL * 100) + '%';
-  document.getElementById('cost-sustain').textContent = upgradeCost(p.infraSustain, false);
-  document.getElementById('cost-temp').textContent = upgradeCost(p.infraTemp, true);
-
-  // Stats bar invest total
   const invEl = document.getElementById('stat-invest');
-  if (invEl) invEl.textContent = (p.capitalSustain || 0) + (p.capitalTemp || 0);
+  if (invEl) invEl.textContent = fmt(investedTotal(p));
+}
 
-  const hist = document.getElementById('invest-history-list');
-  const history = (p.investHistory || []).slice(0, 12);
-  hist.innerHTML = history.length === 0
-    ? '<p class="hint">Aucun mouvement pour le moment.</p>'
-    : history.map(h => {
-      let label = '💼 Investissement';
-      if (h.type === 'interest') label = '📈 Intérêts mensuels';
-      else if (h.type === 'temp_return') label = '↩️ Capital temporaire rendu';
-      else if (h.type === 'upgrade') label = '⬆️ Amélioration infra';
-      else if (h.type === 'invest_sustain') label = '🌱 Placement durable';
-      else if (h.type === 'invest_temp') label = '⚡ Placement temporaire';
-      return `
-        <div class="history-item">
-          <div>
-            <div>${label}${h.detail ? ' · ' + h.detail : ''}</div>
-            <div class="date">${formatDate(h.date)}</div>
+function investedTotal(p) {
+  return (p.capitalSustain || 0) + p.company.sites.reduce((s, x) => s + (x.funded || 0), 0);
+}
+
+function renderCompanyHero(p) {
+  const value = companyValue(p);
+  const lvl = companyLevel(p);
+  const next = COMPANY_LEVELS.find(l => l.value > value);
+  const pct = next ? ((value - lvl.value) / (next.value - lvl.value)) * 100 : 100;
+  const built = builtBuildings(p);
+  const sites = p.company.sites.map(s => getBuilding(s.id)).filter(Boolean);
+  const skyline = built.length || sites.length
+    ? built.map(b => `<span title="${b.name}">${b.emoji}</span>`).join('')
+      + sites.map(b => `<span class="ghost" title="${b.name} (en chantier)">🏗️</span>`).join('')
+    : '<em>Terrain vide… lance ton premier chantier !</em>';
+
+  document.getElementById('company-hero').innerHTML = `
+    <img class="hero-img" src="assets/img/enterprise.svg" alt="">
+    <div class="hero-top">
+      <div class="hero-emoji">${lvl.emoji}</div>
+      <div class="hero-id">
+        <div class="hero-name">${escapeHtml(p.company.name)}
+          <button class="link-btn" data-action="rename" title="Renommer">✏️</button></div>
+        <div class="hero-level">Niv. ${lvl.level} · ${lvl.name}</div>
+      </div>
+    </div>
+    <div class="hero-value"><span>Valeur de l’entreprise</span><strong>${fmt(value)} pts</strong></div>
+    <div class="hero-bar"><div class="hero-fill" style="width:${pct}%"></div></div>
+    <div class="hero-next">${next
+      ? `Prochain statut : ${next.emoji} ${next.name} à ${fmt(next.value)} pts`
+      : 'Statut maximal atteint ! 👑'}</div>
+    <div class="hero-skyline">${skyline}</div>`;
+}
+
+function renderCompanyKpis(p) {
+  const month = monthKeyOf(new Date());
+  const worked = workedDaysInMonth(p, month);
+  const boost = globalTaskBoost(p);
+  document.getElementById('company-kpis').innerHTML = `
+    <div class="kpi"><strong>${fmtRate(companyRate(p))} %</strong><span>Rendement / mois</span><small>max ${MAX_YIELD_RATE} %</small></div>
+    <div class="kpi"><strong>+${boost} %</strong><span>Bonus tâches</span><small>max ${MAX_TASK_BOOST} %</small></div>
+    <div class="kpi"><strong>${fmt(monthlyInterest(p, month))}</strong><span>Intérêts prévus</span><small>pts le 1er du mois</small></div>
+    <div class="kpi ${worked >= ACTIVITY_TARGET_DAYS ? 'good' : ''}"><strong>${Math.min(worked, ACTIVITY_TARGET_DAYS)}/${ACTIVITY_TARGET_DAYS}</strong><span>Jours actifs</span><small>ce mois-ci</small></div>`;
+}
+
+function companySitesHtml(p) {
+  const c = p.company;
+  const slots = siteSlots(p);
+  const limit = state.settings.dailyTaskLimit || 3;
+  let html = `<img class="company-banner" src="assets/img/sustainable.svg" alt="Infrastructures durables">
+    <div class="section-header"><h2>🏗️ Chantiers en cours</h2><span class="hint">${c.sites.length} / ${slots}</span></div>`;
+
+  if (c.sites.length === 0) {
+    html += `<div class="company-card empty-hint">Aucun chantier. Choisis un plan ci-dessous pour commencer à bâtir !</div>`;
+  }
+
+  html += c.sites.map(site => {
+    const b = getBuilding(site.id);
+    if (!b) return '';
+    const pr = siteProgress(p, site);
+    const missingFunds = b.cost - (site.funded || 0);
+    const remainingDays = Math.max(b.days - pr.days, Math.ceil(Math.max(0, b.tasks - pr.tasks) / limit));
+    let status;
+    if (pr.complete) status = '<div class="site-status ready">🎉 Travaux terminés ! Tu peux inaugurer.</div>';
+    else if (pr.idleDays >= SITE_STALL_DAYS) status = `<div class="site-status stall">⚠️ Chantier à l’arrêt depuis ${pr.idleDays} jours. Fais une tâche pour relancer les travaux !</div>`;
+    else if (remainingDays > 0) status = `<div class="site-status">⏳ Encore au moins ${remainingDays} jour(s) de travail</div>`;
+    else status = '<div class="site-status">💰 Il ne manque plus que le financement !</div>';
+
+    return `
+      <div class="company-card site-card">
+        <div class="site-head">
+          <div class="site-emoji">${b.emoji}</div>
+          <div class="site-title">
+            <div class="site-name">${b.name}</div>
+            <div class="hint">Lancé le ${formatDate(site.startedAt)} · ${effectText(b)}</div>
           </div>
-          <div class="amount">${h.type === 'interest' || h.type === 'temp_return' ? '+' : '-'}${h.amount} pts</div>
+        </div>
+        ${progressRow('📅', 'Jours de travail', pr.days, b.days, ' j')}
+        ${progressRow('✅', 'Tâches réalisées', pr.tasks, b.tasks)}
+        ${b.cat ? progressRow('🎯', `Dont ${CATEGORY_LABELS[b.cat]}`, pr.catTasks, b.catTasks) : ''}
+        ${progressRow('💰', 'Financement', site.funded || 0, b.cost, ' pts')}
+        ${status}
+        ${pr.complete
+          ? `<button class="btn-primary btn-large" data-action="inaugurate" data-id="${b.id}">🎉 Inaugurer ${b.name}</button>`
+          : missingFunds > 0 ? `
+            <div class="convert-row">
+              <input type="number" id="fund-${b.id}" min="1" max="${missingFunds}" placeholder="Points">
+              <button class="btn-secondary" data-action="fund-max" data-id="${b.id}">Max</button>
+              <button class="btn-primary" data-action="fund-site" data-id="${b.id}">Financer</button>
+            </div>` : ''}
+        <button class="link-btn danger" data-action="abandon" data-id="${b.id}">Abandonner le chantier</button>
+      </div>`;
+  }).join('');
+
+  const built = builtIds(p);
+  const inProgress = new Set(c.sites.map(s => s.id));
+
+  if (c.buildings.length) {
+    html += `<div class="section-header" style="margin-top:1.2rem"><h2>🏙️ Mes bâtiments</h2><span class="hint">${c.buildings.length} / ${BUILDINGS.length}</span></div>
+      <div class="buildings-grid">${c.buildings.map(x => {
+        const b = getBuilding(x.id);
+        if (!b) return '';
+        return `<div class="building-tile"><div class="emoji">${b.emoji}</div><div class="name">${b.name}</div>
+          <div class="effects">${effectText(b)}</div><div class="hint">Depuis le ${formatDate(x.builtAt)}</div></div>`;
+      }).join('')}</div>`;
+  }
+
+  const plans = BUILDINGS.filter(b => !built.has(b.id) && !inProgress.has(b.id));
+  if (plans.length) {
+    const slotsFull = c.sites.length >= slots;
+    html += `<div class="section-header" style="margin-top:1.2rem"><h2>📐 Plans de construction</h2></div>`;
+    if (slotsFull) html += `<p class="hint" style="margin-bottom:0.6rem">Tous tes emplacements de chantier sont occupés. Termine un chantier pour en lancer un autre.</p>`;
+    html += plans.map(b => {
+      const missing = b.requires.filter(r => !built.has(r));
+      const locked = missing.length > 0;
+      return `
+        <div class="company-card plan-card ${locked ? 'locked' : ''}">
+          <div class="site-head">
+            <div class="site-emoji">${locked ? '🔒' : b.emoji}</div>
+            <div class="site-title">
+              <div class="site-name">${b.name}</div>
+              <div class="hint">${b.desc}</div>
+            </div>
+          </div>
+          <div class="plan-reqs">
+            <span>📅 ${b.days} jours de travail</span>
+            <span>✅ ${b.tasks} tâches${b.cat ? ` (dont ${b.catTasks} ${CATEGORY_LABELS[b.cat]})` : ''}</span>
+            <span>💰 ${fmt(b.cost)} pts</span>
+          </div>
+          <div class="plan-effects">${effectText(b)}</div>
+          ${locked
+            ? `<div class="hint">Nécessite : ${missing.map(r => { const x = getBuilding(r); return `${x.emoji} ${x.name}`; }).join(', ')}</div>`
+            : `<button class="btn-primary btn-block" data-action="start-site" data-id="${b.id}" ${slotsFull ? 'disabled' : ''}>🏗️ Lancer le chantier</button>`}
         </div>`;
     }).join('');
+  } else if (!c.sites.length) {
+    html += `<div class="company-card empty-hint">👑 Tu as tout construit. Ton empire est complet !</div>`;
+  }
+
+  html += `<p class="hint" style="margin-top:0.8rem">Un chantier n’avance que les jours où tu fais au moins une tâche. Pas de travail, pas de bâtiment !</p>`;
+  return html;
 }
 
-function investSustain() {
+function companyContractsHtml(p) {
+  const month = monthKeyOf(new Date());
+  const mine = contractsThisMonth(p);
+  const slots = contractSlots(p);
+  const signedIds = new Set(mine.map(c => c.offerId));
+  const maxStake = companyLevel(p).maxStake;
+  const slotsFull = mine.length >= slots;
+
+  let html = `
+    <img class="company-banner" src="assets/img/temporary.svg" alt="Contrats du mois">
+    <div class="company-card">
+      <h3>📜 Contrats de ${monthLabel(month)}</h3>
+      <p class="hint">Mise des points sur un objectif. Réussis avant la fin du mois : tu récupères ta mise <strong>+ une prime</strong>.
+      En cas d’échec, tu ne récupères que ${Math.round(CONTRACT_FAIL_REFUND * 100)} % de ta mise.
+      Seules les tâches faites <strong>après la signature</strong> comptent.</p>
+      <div class="stat-row"><span>Contrats signés ce mois</span><span>${mine.length} / ${slots}</span></div>
+      <div class="stat-row"><span>Mise maximum (${companyLevel(p).name})</span><span>${fmt(maxStake)} pts</span></div>
+      <div class="stat-row"><span>Fin du mois</span><span>dans ${daysLeftInMonth()} jour(s)</span></div>
+    </div>`;
+
+  if (mine.length) {
+    html += `<div class="section-header"><h2>Mes contrats</h2></div>`;
+    html += mine.map(c => {
+      const tier = CONTRACT_TIERS[c.tier];
+      const prog = contractProgress(p, c);
+      const reward = contractReward(c);
+      const reached = prog >= c.goal;
+      return `
+        <div class="company-card contract-card tier-${c.tier} ${c.status}">
+          <div class="contract-head"><span class="tier-badge">${tier.emoji} ${tier.name}</span><span class="hint">${escapeHtml(c.client)}</span></div>
+          <div class="contract-goal">${contractLabel(c)}</div>
+          ${progressRow('📊', 'Progression', prog, c.goal)}
+          <div class="contract-deal">Mise ${fmt(c.stake)} pts → <strong>${fmt(c.stake + reward)} pts</strong> (+${c.pct} %)</div>
+          ${c.status === 'won'
+            ? '<div class="site-status ready">🏆 Contrat réussi et encaissé !</div>'
+            : reached
+              ? `<button class="btn-primary btn-block" data-action="claim-contract" data-id="${c.offerId}">💰 Encaisser ${fmt(c.stake + reward)} pts</button>`
+              : ''}
+        </div>`;
+    }).join('');
+  }
+
+  const offers = monthlyOffers(p, month).filter(o => !signedIds.has(o.offerId));
+  if (offers.length) {
+    html += `<div class="section-header"><h2>Offres des clients</h2></div>`;
+    if (slotsFull) html += `<p class="hint" style="margin-bottom:0.6rem">Tu as signé le maximum de contrats ce mois-ci. Construis un 📦 Entrepôt ou une 🏦 Banque pour en signer plus.</p>`;
+    html += offers.map(o => {
+      const tier = CONTRACT_TIERS[o.tier];
+      return `
+        <div class="company-card contract-card tier-${o.tier}">
+          <div class="contract-head"><span class="tier-badge">${tier.emoji} ${tier.name}</span><span class="hint">${escapeHtml(o.client)}</span></div>
+          <div class="contract-goal">${contractLabel(o)}</div>
+          <div class="contract-deal">Prime : <strong>+${o.pct} %</strong> de ta mise</div>
+          <div class="convert-row">
+            <input type="number" id="stake-${o.offerId}" min="${CONTRACT_MIN_STAKE}" max="${maxStake}" placeholder="Mise" ${slotsFull ? 'disabled' : ''}>
+            <button class="btn-secondary" data-action="stake-max" data-id="${o.offerId}" ${slotsFull ? 'disabled' : ''}>Max</button>
+            <button class="btn-primary" data-action="sign-contract" data-id="${o.offerId}" ${slotsFull ? 'disabled' : ''}>Signer</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+  return html;
+}
+
+function companyTreasuryHtml(p) {
+  const month = monthKeyOf(new Date());
+  const cap = treasuryCap(p);
+  const capital = p.capitalSustain || 0;
+  const worked = workedDaysInMonth(p, month);
+  const factor = activityFactor(worked);
+  const sources = companyRateSources(p);
+  const now = new Date();
+  const nextPay = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+  return `
+    <div class="company-card">
+      <h3>🏦 Trésorerie</h3>
+      <p class="hint">Les points placés ici sont bloqués et rapportent des intérêts chaque 1er du mois, selon ton rendement et ton activité.</p>
+      ${progressRow('💼', 'Capital placé', capital, cap, ' pts')}
+      ${capital >= cap
+        ? '<p class="hint">Trésorerie pleine ! Construis un 📦 Entrepôt, une 🏦 Banque ou le 🏙️ Siège social pour l’agrandir.</p>'
+        : `<div class="convert-row">
+            <input type="number" id="deposit-pts" min="1" placeholder="Points">
+            <button class="btn-secondary" data-action="deposit-max">Max</button>
+            <button class="btn-primary" data-action="deposit">Placer</button>
+          </div>`}
+    </div>
+
+    <div class="company-card">
+      <h3>📈 Rendement : ${fmtRate(companyRate(p))} % / mois</h3>
+      ${sources.length
+        ? sources.map(s => `<div class="stat-row"><span>${s.label}</span><span>+${fmtRate(s.rate)} %</span></div>`).join('')
+        : '<p class="hint">Aucun rendement pour l’instant. Construis un 🔧 Atelier pour commencer à gagner des intérêts.</p>'}
+      <p class="hint">Plafond : ${MAX_YIELD_RATE} % par mois.</p>
+    </div>
+
+    <div class="company-card">
+      <h3>⚙️ Activité de ${monthLabel(month)}</h3>
+      ${progressRow('📅', 'Jours travaillés', worked, ACTIVITY_TARGET_DAYS, ' j')}
+      <p class="hint">Une entreprise sans travail ne rapporte rien ! Il faut ${ACTIVITY_TARGET_DAYS} jours actifs dans le mois
+        pour toucher 100 % des intérêts. Actuellement : <strong>${Math.round(factor * 100)} %</strong>.</p>
+      <div class="stat-row"><span>Intérêts prévus</span><span>${fmt(monthlyInterest(p, month))} pts</span></div>
+      <div class="stat-row"><span>Prochain versement</span><span>${nextPay.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</span></div>
+    </div>`;
+}
+
+function companyJournalHtml(p) {
+  const history = (p.investHistory || []).slice(0, 40);
+  return `
+    <div class="company-card">
+      <h3>📊 Journal de l’entreprise</h3>
+      ${history.length === 0
+        ? '<p class="hint">Aucun mouvement pour le moment.</p>'
+        : history.map(h => {
+          const t = JOURNAL_TYPES[h.type] || { label: '💼 Mouvement', sign: '' };
+          return `
+            <div class="history-item">
+              <div>
+                <div>${t.label}${h.detail ? ' · ' + escapeHtml(h.detail) : ''}</div>
+                <div class="date">${formatDate(h.date)}</div>
+              </div>
+              ${t.sign && h.amount ? `<div class="amount ${t.sign === '-' ? 'neg' : ''}">${t.sign}${fmt(h.amount)} pts</div>` : ''}
+            </div>`;
+        }).join('')}
+    </div>`;
+}
+
+// ---------- ENTREPRISE : ACTIONS ----------
+function readPoints(inputId) {
+  const el = document.getElementById(inputId);
+  return el ? parseInt(el.value) || 0 : 0;
+}
+
+function setInput(inputId, value) {
+  const el = document.getElementById(inputId);
+  if (el) el.value = Math.max(0, Math.floor(value));
+}
+
+function commitCompany(msg) {
+  saveState();
+  updateStatsBar();
+  renderCompany();
+  if (msg) showToast(msg);
+}
+
+function onCompanyClick(e) {
+  const el = e.target.closest('[data-action]');
+  if (!el || el.disabled) return;
   const p = getCurrentProfile();
   if (!p || p.type !== 'child') return;
   ensureInvestFields(p);
-  const pts = parseInt(document.getElementById('invest-sustain-pts').value) || 0;
+  const id = el.dataset.id;
+
+  switch (el.dataset.action) {
+    case 'view': companyView = id; renderCompany(); break;
+    case 'rename': renameCompany(p); break;
+    case 'start-site': startSite(p, id); break;
+    case 'fund-site': fundSite(p, id, readPoints(`fund-${id}`)); break;
+    case 'fund-max': {
+      const site = p.company.sites.find(s => s.id === id);
+      if (site) setInput(`fund-${id}`, Math.min(p.points || 0, getBuilding(id).cost - (site.funded || 0)));
+      break;
+    }
+    case 'inaugurate': inaugurate(p, id); break;
+    case 'abandon': abandonSite(p, id); break;
+    case 'stake-max': setInput(`stake-${id}`, Math.min(p.points || 0, companyLevel(p).maxStake)); break;
+    case 'sign-contract': signContract(p, id, readPoints(`stake-${id}`)); break;
+    case 'claim-contract': claimContract(p, id); break;
+    case 'deposit-max': setInput('deposit-pts', Math.min(p.points || 0, treasuryCap(p) - (p.capitalSustain || 0))); break;
+    case 'deposit': deposit(p, readPoints('deposit-pts')); break;
+  }
+}
+
+function renameCompany(p) {
+  const name = prompt('Nom de ton entreprise :', p.company.name);
+  if (name == null) return;
+  const clean = name.trim().slice(0, 30);
+  if (!clean) return;
+  p.company.name = clean;
+  commitCompany('Entreprise renommée ✔');
+}
+
+function startSite(p, id) {
+  const b = getBuilding(id);
+  if (!b) return;
+  const built = builtIds(p);
+  if (built.has(id) || p.company.sites.some(s => s.id === id)) return;
+  if (b.requires.some(r => !built.has(r))) { showToast('Il manque des bâtiments requis'); return; }
+  if (p.company.sites.length >= siteSlots(p)) { showToast('Plus d’emplacement de chantier libre'); return; }
+  p.company.sites.push({ id, startedAt: new Date().toISOString(), funded: 0 });
+  logCompany(p, { type: 'site_start', amount: 0, detail: `${b.emoji} ${b.name}` });
+  commitCompany(`Chantier ${b.name} lancé ! 🏗️`);
+}
+
+function fundSite(p, id, pts) {
+  const site = p.company.sites.find(s => s.id === id);
+  const b = getBuilding(id);
+  if (!site || !b) return;
+  const amount = Math.min(pts, b.cost - (site.funded || 0));
+  if (amount <= 0) { showToast('Entre un nombre de points valide'); return; }
+  if (amount > (p.points || 0)) { showToast('Pas assez de points !'); return; }
+  p.points -= amount;
+  site.funded = (site.funded || 0) + amount;
+  logCompany(p, { type: 'site_fund', amount, detail: `${b.emoji} ${b.name}` });
+  commitCompany(`${amount} pts investis dans ${b.name} 💰`);
+}
+
+function inaugurate(p, id) {
+  const site = p.company.sites.find(s => s.id === id);
+  const b = getBuilding(id);
+  if (!site || !b || !siteProgress(p, site).complete) return;
+  const before = companyLevel(p);
+  p.company.sites = p.company.sites.filter(s => s.id !== id);
+  p.company.buildings.push({ id, builtAt: new Date().toISOString() });
+  logCompany(p, { type: 'inaugurate', amount: 0, detail: `${b.emoji} ${b.name}` });
+  commitCompany();
+  showToast(`🎉 ${b.name} inauguré !`, 3500);
+  const after = companyLevel(p);
+  if (after.level > before.level) {
+    setTimeout(() => showToast(`${after.emoji} Ton entreprise devient : ${after.name} !`, 3500), 3000);
+  }
+}
+
+function abandonSite(p, id) {
+  const site = p.company.sites.find(s => s.id === id);
+  const b = getBuilding(id);
+  if (!site || !b) return;
+  const refund = Math.floor((site.funded || 0) * SITE_ABANDON_REFUND);
+  if (!confirm(`Abandonner le chantier ${b.name} ?\n\nToute la progression sera perdue et tu ne récupères que ${refund} pts (${Math.round(SITE_ABANDON_REFUND * 100)} % du financement).`)) return;
+  p.company.sites = p.company.sites.filter(s => s.id !== id);
+  p.points = (p.points || 0) + refund;
+  logCompany(p, { type: 'site_abandon', amount: refund, detail: `${b.emoji} ${b.name}` });
+  commitCompany('Chantier abandonné 🚧');
+}
+
+function signContract(p, offerId, stake) {
+  const month = monthKeyOf(new Date());
+  const offer = monthlyOffers(p, month).find(o => o.offerId === offerId);
+  if (!offer) return;
+  if (contractsThisMonth(p).some(c => c.offerId === offerId)) return;
+  if (contractsThisMonth(p).length >= contractSlots(p)) { showToast('Maximum de contrats atteint ce mois-ci'); return; }
+  const maxStake = companyLevel(p).maxStake;
+  if (stake < CONTRACT_MIN_STAKE || stake > maxStake) { showToast(`Mise entre ${CONTRACT_MIN_STAKE} et ${maxStake} pts`); return; }
+  if (stake > (p.points || 0)) { showToast('Pas assez de points !'); return; }
+  p.points -= stake;
+  p.company.contracts.push({ ...offer, stake, signedAt: new Date().toISOString(), status: 'active' });
+  logCompany(p, { type: 'contract_sign', amount: stake, detail: offer.client });
+  commitCompany('Contrat signé ✍️ Au travail !');
+}
+
+function claimContract(p, offerId) {
+  const c = contractsThisMonth(p).find(x => x.offerId === offerId && x.status === 'active');
+  if (!c || contractProgress(p, c) < c.goal) return;
+  payContract(p, c);
+  commitCompany(`🏆 +${fmt(c.stake + contractReward(c))} pts encaissés !`);
+}
+
+function deposit(p, pts) {
+  const room = treasuryCap(p) - (p.capitalSustain || 0);
   if (pts <= 0) { showToast('Entre un nombre valide'); return; }
   if (pts > (p.points || 0)) { showToast('Pas assez de points !'); return; }
-  p.points -= pts;
-  p.capitalSustain += pts;
-  p.investHistory.unshift({ date: new Date().toISOString(), amount: pts, type: 'invest_sustain' });
-  saveState();
-  document.getElementById('invest-sustain-pts').value = '';
-  updateStatsBar();
-  renderInvest();
-  showToast(`${pts} pts placés en durable 🌱`);
-}
-
-function investTemp() {
-  const p = getCurrentProfile();
-  if (!p || p.type !== 'child') return;
-  ensureInvestFields(p);
-  const pts = parseInt(document.getElementById('invest-temp-pts').value) || 0;
-  if (pts <= 0) { showToast('Entre un nombre valide'); return; }
-  if (pts > (p.points || 0)) { showToast('Pas assez de points !'); return; }
-  p.points -= pts;
-  p.capitalTemp += pts;
-  p.investHistory.unshift({ date: new Date().toISOString(), amount: pts, type: 'invest_temp' });
-  saveState();
-  document.getElementById('invest-temp-pts').value = '';
-  updateStatsBar();
-  renderInvest();
-  showToast(`${pts} pts placés en temporaire ⚡`);
-}
-
-function upgradeSustain() {
-  const p = getCurrentProfile();
-  if (!p || p.type !== 'child') return;
-  ensureInvestFields(p);
-  if ((p.infraSustain || 0) >= MAX_INFRA_LEVEL) {
-    showToast('Niveau max durable atteint (5 %)');
-    return;
-  }
-  const cost = upgradeCost(p.infraSustain, false);
-  if ((p.points || 0) < cost) {
-    showToast(`Il faut ${cost} points`);
-    return;
-  }
-  p.points -= cost;
-  p.infraSustain = (p.infraSustain || 0) + 1;
-  p.investHistory.unshift({
-    date: new Date().toISOString(), amount: cost, type: 'upgrade',
-    detail: `Durable niv. ${p.infraSustain} → ${infraRate(p.infraSustain).toFixed(1)}%`
-  });
-  saveState();
-  updateStatsBar();
-  renderInvest();
-  showToast(`Infra durable niv. ${p.infraSustain} ! (${infraRate(p.infraSustain).toFixed(1)} %)`);
-}
-
-function upgradeTemp() {
-  const p = getCurrentProfile();
-  if (!p || p.type !== 'child') return;
-  ensureInvestFields(p);
-  if ((p.infraTemp || 0) >= MAX_INFRA_LEVEL) {
-    showToast('Niveau max temporaire atteint (5 %)');
-    return;
-  }
-  const cost = upgradeCost(p.infraTemp, true);
-  if ((p.points || 0) < cost) {
-    showToast(`Il faut ${cost} points`);
-    return;
-  }
-  p.points -= cost;
-  p.infraTemp = (p.infraTemp || 0) + 1;
-  p.investHistory.unshift({
-    date: new Date().toISOString(), amount: cost, type: 'upgrade',
-    detail: `Temp niv. ${p.infraTemp} → ${infraRate(p.infraTemp).toFixed(1)}%`
-  });
-  saveState();
-  updateStatsBar();
-  renderInvest();
-  showToast(`Infra temporaire niv. ${p.infraTemp} ! (${infraRate(p.infraTemp).toFixed(1)} %)`);
+  if (room <= 0) { showToast('Trésorerie pleine'); return; }
+  const amount = Math.min(pts, room);
+  p.points -= amount;
+  p.capitalSustain += amount;
+  logCompany(p, { type: 'invest_sustain', amount });
+  commitCompany(`${amount} pts placés en trésorerie 🏦`);
 }
 
 function renderProgress() {
@@ -1125,6 +1752,7 @@ function renderAdminFamily() {
   }
   list.innerHTML = state.profiles.map(p => {
     const isParent = p.type === 'parent';
+    if (!isParent) ensureInvestFields(p);
     return `
       <div class="family-card">
         <img src="${avatarSVG(p.avatar, 48)}" alt="">
@@ -1133,7 +1761,7 @@ function renderAdminFamily() {
           <div class="fmeta">
             ${isParent
               ? 'Parent · Admin'
-              : `Niv. ${p.level || 1} · ${p.points || 0} pts · ${formatMoney(p.wallet || 0)} · ${p.tasksDone || 0} tâches`}
+              : `Niv. ${p.level || 1} · ${p.points || 0} pts · ${formatMoney(p.wallet || 0)} · ${p.tasksDone || 0} tâches · ${companyLevel(p).emoji} ${companyLevel(p).name} (${builtBuildings(p).length} bât.)`}
           </div>
         </div>
       </div>`;
@@ -1256,9 +1884,6 @@ async function saveProfile() {
       points: 0,
       wallet: 0,
       capitalSustain: 0,
-      capitalTemp: 0,
-      infraSustain: 0,
-      infraTemp: 0,
       level: 1,
       xp: 0,
       tasksDone: 0,
@@ -1407,7 +2032,7 @@ function switchTab(tabId, navRoot) {
   if (tab) tab.classList.add('active');
 
   if (tabId === 'wallet') renderWallet();
-  if (tabId === 'invest') renderInvest();
+  if (tabId === 'invest') renderCompany();
   if (tabId === 'progress') renderProgress();
   if (tabId === 'admin-tasks') renderAdminTasks();
   if (tabId === 'admin-catalog') renderAdminCatalog();
@@ -1418,6 +2043,7 @@ function switchTab(tabId, navRoot) {
 // ---------- INIT ----------
 function init() {
   loadState();
+  migrateProfiles();
   checkMonthlyReset();
   applyTheme(state.settings.theme || 'default');
 
@@ -1444,10 +2070,7 @@ function init() {
   document.getElementById('convert-points').addEventListener('input', updateConvertPreview);
   document.getElementById('btn-confirm-complete').addEventListener('click', confirmComplete);
 
-  document.getElementById('btn-invest-sustain').addEventListener('click', investSustain);
-  document.getElementById('btn-invest-temp').addEventListener('click', investTemp);
-  document.getElementById('btn-upgrade-sustain').addEventListener('click', upgradeSustain);
-  document.getElementById('btn-upgrade-temp').addEventListener('click', upgradeTemp);
+  document.getElementById('tab-invest').addEventListener('click', onCompanyClick);
 
   const searchInput = document.getElementById('catalog-search');
   if (searchInput) {
