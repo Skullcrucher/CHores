@@ -3,7 +3,10 @@
    ============================================ */
 
 const STORAGE_KEY = 'chores_v1';
+const BACKUP_KEY = 'chores_backups_v1';
 const RATE_DEFAULT = 0.10; // 1 point = 0.10 €
+const MAX_AUTO_BACKUPS = 5;
+const APP_VERSION = '1.1.0';
 
 // ---------- AVATARS (SVG data URIs) ----------
 const AVATARS = [
@@ -68,11 +71,115 @@ function loadState() {
     }
   } catch (e) {
     console.warn('Erreur chargement', e);
+    // Tentative de restauration depuis la dernière sauvegarde auto
+    const backups = getAutoBackups();
+    if (backups.length > 0) {
+      try {
+        state = { ...state, ...backups[0].data };
+        console.info('Restauré depuis sauvegarde auto');
+      } catch (_) {}
+    }
   }
 }
 
 function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    createAutoBackup();
+  } catch (e) {
+    console.error('Erreur sauvegarde', e);
+    showToast('⚠️ Espace de stockage insuffisant');
+  }
+}
+
+// ---------- AUTO BACKUPS ----------
+function getAutoBackups() {
+  try {
+    const raw = localStorage.getItem(BACKUP_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function createAutoBackup() {
+  try {
+    let backups = getAutoBackups();
+    const snapshot = {
+      id: 'bak_' + Date.now(),
+      date: new Date().toISOString(),
+      version: APP_VERSION,
+      profilesCount: state.profiles.length,
+      tasksCount: state.tasks.filter(t => !t.archived).length,
+      data: JSON.parse(JSON.stringify(state)), // deep copy
+    };
+
+    // Évite les doublons trop rapprochés (< 30 s)
+    if (backups.length > 0) {
+      const last = new Date(backups[0].date).getTime();
+      if (Date.now() - last < 30000) {
+        backups[0] = snapshot; // remplace la plus récente
+      } else {
+        backups.unshift(snapshot);
+      }
+    } else {
+      backups.unshift(snapshot);
+    }
+
+    // Garde uniquement les N dernières
+    backups = backups.slice(0, MAX_AUTO_BACKUPS);
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(backups));
+  } catch (e) {
+    console.warn('Auto-backup échoué', e);
+  }
+}
+
+function restoreAutoBackup(backupId) {
+  const backups = getAutoBackups();
+  const bak = backups.find(b => b.id === backupId);
+  if (!bak) {
+    showToast('Sauvegarde introuvable');
+    return;
+  }
+  if (!confirm(`Restaurer la sauvegarde du ${formatDateTime(bak.date)} ?\n\nLes données actuelles seront remplacées.`)) {
+    return;
+  }
+  state = JSON.parse(JSON.stringify(bak.data));
+  // Sauvegarde l'état restauré sans recréer un backup immédiat
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  showToast('Sauvegarde restaurée ✔');
+  setTimeout(() => location.reload(), 600);
+}
+
+function formatDateTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('fr-FR', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
+function renderAutoBackups() {
+  const list = document.getElementById('auto-backups-list');
+  if (!list) return;
+  const backups = getAutoBackups();
+  if (backups.length === 0) {
+    list.innerHTML = '<div class="backups-empty">Aucune sauvegarde automatique pour le moment</div>';
+    return;
+  }
+  list.innerHTML = backups.map(b => `
+    <div class="backup-item">
+      <div class="backup-info">
+        <div class="backup-date">${formatDateTime(b.date)}</div>
+        <div class="backup-meta">${b.profilesCount} membre(s) · ${b.tasksCount} tâche(s)</div>
+      </div>
+      <button class="btn-restore" data-id="${b.id}">Restaurer</button>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.btn-restore').forEach(btn => {
+    btn.addEventListener('click', () => restoreAutoBackup(btn.dataset.id));
+  });
 }
 
 // ---------- MONTHLY RESET & INTEREST ----------
@@ -661,26 +768,51 @@ function renderThemes() {
 function openSettings() {
   document.getElementById('rate-input').value = state.settings.rate;
   renderThemes();
+  renderAutoBackups();
   openModal('modal-settings');
 }
 
 // ---------- EXPORT / IMPORT / RESET ----------
+function simpleChecksum(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h) + str.charCodeAt(i);
+    h |= 0;
+  }
+  return (h >>> 0).toString(16);
+}
+
 function exportData() {
-  const data = JSON.stringify(state, null, 2);
-  const blob = new Blob([data], { type: 'application/json' });
+  // Crée d'abord une auto-backup avant d'exporter
+  createAutoBackup();
+
+  const payload = {
+    app: 'Chores',
+    version: APP_VERSION,
+    exportedAt: new Date().toISOString(),
+    profilesCount: state.profiles.length,
+    tasksCount: state.tasks.length,
+    data: state,
+  };
+  const json = JSON.stringify(payload, null, 2);
+  payload.checksum = simpleChecksum(JSON.stringify(payload.data));
+  const finalJson = JSON.stringify(payload, null, 2);
+
+  const blob = new Blob([finalJson], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `chores-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.download = `chores-backup-${dateStr}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  showToast('Données exportées');
+  showToast('Sauvegarde exportée ✔');
 }
 
 function importData() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.json';
+  input.accept = '.json,application/json';
   input.onchange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -688,14 +820,49 @@ function importData() {
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target.result);
-        if (parsed.profiles && Array.isArray(parsed.profiles)) {
-          state = { ...state, ...parsed };
-          saveState();
-          location.reload();
-        } else {
-          showToast('Fichier invalide');
+
+        // Accepte le nouveau format (avec envelope) ou l'ancien (state direct)
+        let data = null;
+        if (parsed.data && parsed.data.profiles) {
+          // Nouveau format avec métadonnées
+          if (parsed.checksum) {
+            const expected = simpleChecksum(JSON.stringify(parsed.data));
+            if (expected !== parsed.checksum) {
+              if (!confirm('⚠️ Le fichier semble corrompu (checksum incorrect).\nVoulez-vous quand même essayer de le restaurer ?')) {
+                return;
+              }
+            }
+          }
+          data = parsed.data;
+        } else if (parsed.profiles && Array.isArray(parsed.profiles)) {
+          // Ancien format
+          data = parsed;
         }
-      } catch {
+
+        if (!data || !Array.isArray(data.profiles)) {
+          showToast('Fichier de sauvegarde invalide');
+          return;
+        }
+
+        const dateInfo = parsed.exportedAt
+          ? `\nExporté le : ${formatDateTime(parsed.exportedAt)}`
+          : '';
+        const confirmMsg =
+          `Restaurer cette sauvegarde ?${dateInfo}\n` +
+          `${data.profiles.length} membre(s), ${data.tasks ? data.tasks.length : 0} tâche(s).\n\n` +
+          `Les données actuelles seront remplacées (une sauvegarde auto sera gardée).`;
+
+        if (!confirm(confirmMsg)) return;
+
+        // Sauvegarde l'état actuel avant d'écraser
+        createAutoBackup();
+
+        state = { ...state, ...data };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        showToast('Sauvegarde restaurée ✔');
+        setTimeout(() => location.reload(), 600);
+      } catch (err) {
+        console.error(err);
         showToast('Erreur de lecture du fichier');
       }
     };
@@ -705,10 +872,14 @@ function importData() {
 }
 
 function resetApp() {
-  if (confirm('⚠️ Tout sera effacé (profils, tâches, points…). Continuer ?')) {
-    localStorage.removeItem(STORAGE_KEY);
-    location.reload();
+  if (!confirm('⚠️ Tout sera effacé (profils, tâches, points…).\n\nUne dernière sauvegarde automatique sera conservée.')) {
+    return;
   }
+  createAutoBackup();
+  localStorage.removeItem(STORAGE_KEY);
+  // On garde BACKUP_KEY volontairement pour pouvoir restaurer
+  showToast('Application réinitialisée');
+  setTimeout(() => location.reload(), 600);
 }
 
 // ---------- TABS ----------
