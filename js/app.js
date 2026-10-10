@@ -1,14 +1,13 @@
 /* ============================================
-   CHORES - Application familiale
+   CHORES - Application familiale v2
    ============================================ */
 
-const STORAGE_KEY = 'chores_v1';
-const BACKUP_KEY = 'chores_backups_v1';
-const RATE_DEFAULT = 0.10; // 1 point = 0.10 €
+const STORAGE_KEY = 'chores_v2';
+const BACKUP_KEY = 'chores_backups_v2';
+const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '2.0.0';
 
-// ---------- AVATARS (SVG data URIs) ----------
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
   { id: 'girl1', emoji: '👧', color: '#F472B6' },
@@ -19,28 +18,98 @@ const AVATARS = [
   { id: 'man2', emoji: '🧔', color: '#2DD4BF' },
   { id: 'woman2', emoji: '👩‍🦰', color: '#F97316' },
   { id: 'kid1', emoji: '👶', color: '#818CF8' },
-  { id: 'kid2', emoji: '👶', color: '#34D399' },
   { id: 'cat', emoji: '🐱', color: '#F59E0B' },
   { id: 'dog', emoji: '🐶', color: '#EF4444' },
   { id: 'fox', emoji: '🦊', color: '#F97316' },
   { id: 'panda', emoji: '🐼', color: '#64748B' },
   { id: 'unicorn', emoji: '🦄', color: '#C084FC' },
+  { id: 'robot', emoji: '🤖', color: '#94A3B8' },
 ];
 
-// ---------- TITLES (by level) ----------
 const TITLES = [
-  { level: 1,  name: 'Débutant',        emoji: '🌱' },
-  { level: 3,  name: 'Apprenti',         emoji: '📘' },
-  { level: 5,  name: 'Aide à domicile',  emoji: '🧹' },
-  { level: 8,  name: 'Pro du ménage',    emoji: '✨' },
-  { level: 12, name: 'Champion familial',emoji: '🏆' },
-  { level: 16, name: 'Maître des tâches',emoji: '👑' },
-  { level: 20, name: 'Légende du foyer', emoji: '🌟' },
-  { level: 25, name: 'Super Héros',      emoji: '🦸' },
-  { level: 30, name: 'Dieu du ménage',   emoji: '⚡' },
+  { level: 1,  name: 'Débutant',         emoji: '🌱' },
+  { level: 3,  name: 'Apprenti',          emoji: '📘' },
+  { level: 5,  name: 'Aide à domicile',   emoji: '🧹' },
+  { level: 8,  name: 'Pro du ménage',     emoji: '✨' },
+  { level: 12, name: 'Champion familial', emoji: '🏆' },
+  { level: 16, name: 'Maître des tâches', emoji: '👑' },
+  { level: 20, name: 'Légende du foyer',  emoji: '🌟' },
+  { level: 25, name: 'Super Héros',       emoji: '🦸' },
+  { level: 30, name: 'Dieu du ménage',    emoji: '⚡' },
 ];
 
-// XP needed per level (cumulative)
+const CATEGORY_LABELS = {
+  cuisine: '🍳 Cuisine',
+  menage: '🧹 Ménage',
+  linge: '👕 Linge',
+  exterieur: '🌳 Extérieur',
+  animaux: '🐾 Animaux',
+  autre: '📦 Autre',
+};
+
+const FELT_LABELS = {
+  1: 'Facile',
+  2: 'Normale',
+  3: 'Difficile',
+  4: 'Très dure',
+};
+
+/** Catalogue de tâches prédéfinies */
+const DEFAULT_TEMPLATES = [
+  // Cuisine
+  { name: 'Mettre la table', category: 'cuisine', points: 5, difficulty: 'facile' },
+  { name: 'Débarrasser la table', category: 'cuisine', points: 5, difficulty: 'facile' },
+  { name: 'Vider le lave-vaisselle', category: 'cuisine', points: 10, difficulty: 'facile' },
+  { name: 'Remplir le lave-vaisselle', category: 'cuisine', points: 10, difficulty: 'facile' },
+  { name: 'Faire la vaisselle à la main', category: 'cuisine', points: 20, difficulty: 'moyen' },
+  { name: 'Nettoyer le plan de travail', category: 'cuisine', points: 10, difficulty: 'facile' },
+  { name: 'Nettoyer la table', category: 'cuisine', points: 5, difficulty: 'facile' },
+  { name: 'Sortir les poubelles', category: 'cuisine', points: 10, difficulty: 'facile' },
+  { name: 'Trier le recyclage', category: 'cuisine', points: 10, difficulty: 'facile' },
+  { name: 'Aider à préparer le repas', category: 'cuisine', points: 25, difficulty: 'moyen' },
+  { name: 'Préparer un repas simple', category: 'cuisine', points: 40, difficulty: 'difficile' },
+  { name: 'Nettoyer le micro-ondes', category: 'cuisine', points: 15, difficulty: 'moyen' },
+  { name: 'Nettoyer le four', category: 'cuisine', points: 30, difficulty: 'difficile' },
+  { name: 'Faire les courses (aide)', category: 'cuisine', points: 20, difficulty: 'moyen' },
+  // Ménage
+  { name: 'Passer l\'aspirateur (1 pièce)', category: 'menage', points: 15, difficulty: 'moyen' },
+  { name: 'Passer l\'aspirateur (tout)', category: 'menage', points: 30, difficulty: 'difficile' },
+  { name: 'Balayer le sol', category: 'menage', points: 10, difficulty: 'facile' },
+  { name: 'Passer la serpillière', category: 'menage', points: 20, difficulty: 'moyen' },
+  { name: 'Faire son lit', category: 'menage', points: 5, difficulty: 'facile' },
+  { name: 'Ranger sa chambre', category: 'menage', points: 15, difficulty: 'moyen' },
+  { name: 'Ranger le salon', category: 'menage', points: 15, difficulty: 'moyen' },
+  { name: 'Dépoussiérer les meubles', category: 'menage', points: 15, difficulty: 'moyen' },
+  { name: 'Nettoyer les vitres (1 pièce)', category: 'menage', points: 20, difficulty: 'moyen' },
+  { name: 'Nettoyer la salle de bain', category: 'menage', points: 30, difficulty: 'difficile' },
+  { name: 'Nettoyer les toilettes', category: 'menage', points: 20, difficulty: 'moyen' },
+  { name: 'Changer les draps', category: 'menage', points: 15, difficulty: 'moyen' },
+  { name: 'Vider les corbeilles', category: 'menage', points: 5, difficulty: 'facile' },
+  // Linge
+  { name: 'Mettre une machine', category: 'linge', points: 10, difficulty: 'facile' },
+  { name: 'Étendre le linge', category: 'linge', points: 15, difficulty: 'moyen' },
+  { name: 'Plier le linge', category: 'linge', points: 15, difficulty: 'moyen' },
+  { name: 'Ranger le linge dans les armoires', category: 'linge', points: 10, difficulty: 'facile' },
+  { name: 'Repasser (petit lot)', category: 'linge', points: 25, difficulty: 'difficile' },
+  // Extérieur
+  { name: 'Arroser les plantes', category: 'exterieur', points: 10, difficulty: 'facile' },
+  { name: 'Tondre la pelouse', category: 'exterieur', points: 40, difficulty: 'difficile' },
+  { name: 'Ramasser les feuilles', category: 'exterieur', points: 20, difficulty: 'moyen' },
+  { name: 'Nettoyer le jardin / terrasse', category: 'exterieur', points: 25, difficulty: 'moyen' },
+  { name: 'Laver la voiture', category: 'exterieur', points: 40, difficulty: 'difficile' },
+  { name: 'Sortir les poubelles de jardin', category: 'exterieur', points: 10, difficulty: 'facile' },
+  // Animaux
+  { name: 'Nourrir les animaux', category: 'animaux', points: 5, difficulty: 'facile' },
+  { name: 'Promener le chien', category: 'animaux', points: 20, difficulty: 'moyen' },
+  { name: 'Nettoyer la litière', category: 'animaux', points: 15, difficulty: 'moyen' },
+  { name: 'Brosser l\'animal', category: 'animaux', points: 10, difficulty: 'facile' },
+  // Autre
+  { name: 'Aider un frère / une sœur', category: 'autre', points: 15, difficulty: 'moyen' },
+  { name: 'Ranger les jouets / affaires', category: 'autre', points: 10, difficulty: 'facile' },
+  { name: 'Préparer son cartable', category: 'autre', points: 5, difficulty: 'facile' },
+  { name: 'Aider aux devoirs (frère/sœur)', category: 'autre', points: 20, difficulty: 'moyen' },
+];
+
 function xpForLevel(level) {
   return Math.floor(100 * Math.pow(level, 1.5));
 }
@@ -48,18 +117,21 @@ function xpForLevel(level) {
 // ---------- STATE ----------
 let state = {
   profiles: [],
+  templates: [],
   tasks: [],
   currentProfileId: null,
-  settings: {
-    rate: RATE_DEFAULT,
-    theme: 'default',
-  },
-  lastMonthCheck: null, // YYYY-MM for monthly reset
+  settings: { rate: RATE_DEFAULT, theme: 'default' },
+  lastMonthCheck: null,
 };
 
 let editingProfileId = null;
 let selectedAvatar = 'boy1';
-let selectedDifficulty = 15;
+let selectedProfileType = 'child';
+let selectedTemplatePoints = 15;
+let pendingCompleteTaskId = null;
+let selectedFelt = 2;
+let pendingPasswordProfileId = null;
+let editingTemplateId = null;
 
 // ---------- PERSISTENCE ----------
 function loadState() {
@@ -71,15 +143,25 @@ function loadState() {
     }
   } catch (e) {
     console.warn('Erreur chargement', e);
-    // Tentative de restauration depuis la dernière sauvegarde auto
     const backups = getAutoBackups();
     if (backups.length > 0) {
-      try {
-        state = { ...state, ...backups[0].data };
-        console.info('Restauré depuis sauvegarde auto');
-      } catch (_) {}
+      try { state = { ...state, ...backups[0].data }; } catch (_) {}
     }
   }
+  if (!state.templates || state.templates.length === 0) {
+    seedTemplates();
+  }
+}
+
+function seedTemplates() {
+  state.templates = DEFAULT_TEMPLATES.map((t, i) => ({
+    id: 'tpl_' + (i + 1),
+    name: t.name,
+    category: t.category,
+    points: t.points,
+    difficulty: t.difficulty,
+    active: true,
+  }));
 }
 
 function saveState() {
@@ -92,14 +174,11 @@ function saveState() {
   }
 }
 
-// ---------- AUTO BACKUPS ----------
 function getAutoBackups() {
   try {
     const raw = localStorage.getItem(BACKUP_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 function createAutoBackup() {
@@ -110,53 +189,44 @@ function createAutoBackup() {
       date: new Date().toISOString(),
       version: APP_VERSION,
       profilesCount: state.profiles.length,
-      tasksCount: state.tasks.filter(t => !t.archived).length,
-      data: JSON.parse(JSON.stringify(state)), // deep copy
+      tasksCount: state.tasks.filter(t => !t.archived && !t.done).length,
+      data: JSON.parse(JSON.stringify(state)),
     };
-
-    // Évite les doublons trop rapprochés (< 30 s)
     if (backups.length > 0) {
       const last = new Date(backups[0].date).getTime();
-      if (Date.now() - last < 30000) {
-        backups[0] = snapshot; // remplace la plus récente
-      } else {
-        backups.unshift(snapshot);
-      }
+      if (Date.now() - last < 30000) backups[0] = snapshot;
+      else backups.unshift(snapshot);
     } else {
       backups.unshift(snapshot);
     }
-
-    // Garde uniquement les N dernières
     backups = backups.slice(0, MAX_AUTO_BACKUPS);
     localStorage.setItem(BACKUP_KEY, JSON.stringify(backups));
-  } catch (e) {
-    console.warn('Auto-backup échoué', e);
-  }
+  } catch (e) { console.warn('Auto-backup échoué', e); }
 }
 
 function restoreAutoBackup(backupId) {
-  const backups = getAutoBackups();
-  const bak = backups.find(b => b.id === backupId);
-  if (!bak) {
-    showToast('Sauvegarde introuvable');
-    return;
-  }
-  if (!confirm(`Restaurer la sauvegarde du ${formatDateTime(bak.date)} ?\n\nLes données actuelles seront remplacées.`)) {
-    return;
-  }
+  const bak = getAutoBackups().find(b => b.id === backupId);
+  if (!bak) { showToast('Sauvegarde introuvable'); return; }
+  if (!confirm(`Restaurer la sauvegarde du ${formatDateTime(bak.date)} ?\n\nLes données actuelles seront remplacées.`)) return;
   state = JSON.parse(JSON.stringify(bak.data));
-  // Sauvegarde l'état restauré sans recréer un backup immédiat
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   showToast('Sauvegarde restaurée ✔');
   setTimeout(() => location.reload(), 600);
 }
 
 function formatDateTime(iso) {
-  const d = new Date(iso);
-  return d.toLocaleDateString('fr-FR', {
+  return new Date(iso).toLocaleDateString('fr-FR', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
   });
+}
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+}
+
+function formatMoney(n) {
+  return (n || 0).toFixed(2).replace('.', ',') + ' €';
 }
 
 function renderAutoBackups() {
@@ -164,7 +234,7 @@ function renderAutoBackups() {
   if (!list) return;
   const backups = getAutoBackups();
   if (backups.length === 0) {
-    list.innerHTML = '<div class="backups-empty">Aucune sauvegarde automatique pour le moment</div>';
+    list.innerHTML = '<div class="backups-empty">Aucune sauvegarde automatique</div>';
     return;
   }
   list.innerHTML = backups.map(b => `
@@ -176,40 +246,29 @@ function renderAutoBackups() {
       <button class="btn-restore" data-id="${b.id}">Restaurer</button>
     </div>
   `).join('');
-
   list.querySelectorAll('.btn-restore').forEach(btn => {
     btn.addEventListener('click', () => restoreAutoBackup(btn.dataset.id));
   });
 }
 
-// ---------- MONTHLY RESET & INTEREST ----------
+// ---------- MONTHLY ----------
 function checkMonthlyReset() {
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
   if (state.lastMonthCheck === currentMonth) return;
 
-  // Apply interest on investments (10%)
   state.profiles.forEach(p => {
-    if (p.investedPoints > 0) {
+    if (p.type === 'child' && (p.investedPoints || 0) > 0) {
       const interest = Math.floor(p.investedPoints * 0.10);
       if (interest > 0) {
-        p.points += interest;
+        p.points = (p.points || 0) + interest;
         p.pointsTotal = (p.pointsTotal || 0) + interest;
         p.investHistory = p.investHistory || [];
-        p.investHistory.unshift({
-          date: new Date().toISOString(),
-          amount: interest,
-          type: 'interest'
-        });
+        p.investHistory.unshift({ date: new Date().toISOString(), amount: interest, type: 'interest' });
       }
     }
-    // Reset monthly conversion tracking
     p.convertedThisMonth = 0;
-    // Reset remaining points? User said: points remaining after ceiling can be invested.
-    // Points that couldn't be converted stay, but we reset the conversion counter.
   });
-
   state.lastMonthCheck = currentMonth;
   saveState();
 }
@@ -221,9 +280,7 @@ function getCurrentProfile() {
 
 function getTitleForLevel(level) {
   let title = TITLES[0];
-  for (const t of TITLES) {
-    if (level >= t.level) title = t;
-  }
+  for (const t of TITLES) if (level >= t.level) title = t;
   return title;
 }
 
@@ -234,69 +291,89 @@ function showToast(msg, duration = 2500) {
   setTimeout(() => toast.classList.remove('show'), duration);
 }
 
-function openModal(id) {
-  document.getElementById(id).classList.add('active');
-}
-function closeModal(id) {
-  document.getElementById(id).classList.remove('active');
-}
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
-function formatMoney(n) {
-  return n.toFixed(2).replace('.', ',') + ' €';
-}
-
-function formatDate(iso) {
-  const d = new Date(iso);
-  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
-}
-
-// ---------- AVATAR RENDER ----------
 function avatarSVG(avatarId, size = 80) {
   const a = AVATARS.find(x => x.id === avatarId) || AVATARS[0];
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
-      <circle cx="50" cy="50" r="50" fill="${a.color}"/>
-      <text x="50" y="62" font-size="48" text-anchor="middle" dominant-baseline="middle">${a.emoji}</text>
-    </svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
+    <circle cx="50" cy="50" r="50" fill="${a.color}"/>
+    <text x="50" y="62" font-size="48" text-anchor="middle" dominant-baseline="middle">${a.emoji}</text>
+  </svg>`;
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
-// ---------- RENDER PROFILES ----------
+/** Hash simple pour mot de passe (pas crypto fort, mais suffisant hors-ligne) */
+async function hashPassword(pwd) {
+  const enc = new TextEncoder().encode('chores_salt_' + pwd);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ---------- PROFILES UI ----------
 function renderProfiles() {
   const grid = document.getElementById('profiles-grid');
   if (state.profiles.length === 0) {
     grid.innerHTML = `
       <div class="empty-state" style="grid-column:1/-1">
         <div class="emoji">👨‍👩‍👧‍👦</div>
-        <p>Aucun membre pour le moment.<br>Ajoute le premier membre de la famille !</p>
+        <p>Aucun membre.<br>Ajoute un parent ou un enfant !</p>
       </div>`;
     return;
   }
   grid.innerHTML = state.profiles.map(p => {
+    const isParent = p.type === 'parent';
     const title = getTitleForLevel(p.level || 1);
     return `
-      <div class="profile-card" data-id="${p.id}">
+      <div class="profile-card ${isParent ? 'parent-card' : ''}" data-id="${p.id}">
         <img class="avatar" src="${avatarSVG(p.avatar)}" alt="${p.name}">
         <div class="name">${p.name}</div>
-        <div class="level-mini">Niv. ${p.level || 1} · ${title.emoji}</div>
+        ${isParent
+          ? '<div class="badge-parent">🔑 Parent</div>'
+          : `<div class="level-mini">Niv. ${p.level || 1} · ${title.emoji}</div>`}
       </div>`;
   }).join('');
 
   grid.querySelectorAll('.profile-card').forEach(card => {
-    card.addEventListener('click', () => {
-      state.currentProfileId = card.dataset.id;
-      saveState();
-      showMain();
-    });
+    card.addEventListener('click', () => onProfileClick(card.dataset.id));
   });
 }
 
-// ---------- RENDER MAIN ----------
-function showMain() {
-  const p = getCurrentProfile();
+function onProfileClick(profileId) {
+  const p = state.profiles.find(x => x.id === profileId);
   if (!p) return;
+  if (p.type === 'parent') {
+    pendingPasswordProfileId = profileId;
+    document.getElementById('password-input').value = '';
+    document.getElementById('password-hint').textContent = `Mot de passe de ${p.name}`;
+    openModal('modal-password');
+  } else {
+    state.currentProfileId = profileId;
+    saveState();
+    showMainChild();
+  }
+}
 
+async function checkPassword() {
+  const pwd = document.getElementById('password-input').value;
+  const p = state.profiles.find(x => x.id === pendingPasswordProfileId);
+  if (!p) return;
+  const hash = await hashPassword(pwd);
+  if (hash !== p.passwordHash) {
+    showToast('Mot de passe incorrect');
+    return;
+  }
+  closeModal('modal-password');
+  state.currentProfileId = p.id;
+  saveState();
+  showMainAdmin();
+}
+
+function showMainChild() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
   document.getElementById('profile-select').classList.remove('active');
+  document.getElementById('main-admin').classList.remove('active');
   document.getElementById('main').classList.add('active');
 
   document.getElementById('current-avatar').src = avatarSVG(p.avatar, 42);
@@ -305,10 +382,26 @@ function showMain() {
   document.getElementById('current-title').textContent = `${title.emoji} ${title.name}`;
 
   updateStatsBar();
-  renderTasks();
+  renderChildTasks();
   renderWallet();
   renderInvest();
   renderProgress();
+}
+
+function showMainAdmin() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'parent') return;
+  document.getElementById('profile-select').classList.remove('active');
+  document.getElementById('main').classList.remove('active');
+  document.getElementById('main-admin').classList.add('active');
+
+  document.getElementById('admin-avatar').src = avatarSVG(p.avatar, 42);
+  document.getElementById('admin-name').textContent = p.name;
+
+  renderAdminTasks();
+  renderAdminCatalog();
+  renderAssignForm();
+  renderAdminFamily();
 }
 
 function updateStatsBar() {
@@ -320,104 +413,120 @@ function updateStatsBar() {
   document.getElementById('stat-invest').textContent = p.investedPoints || 0;
 }
 
-// ---------- TASKS ----------
-function renderTasks() {
-  const p = getCurrentProfile();
-  const myTasks = state.tasks.filter(t => t.assigneeId === p.id && !t.archived);
-  const familyTasks = state.tasks.filter(t => t.assigneeId !== p.id && !t.archived);
+function backToProfiles() {
+  document.getElementById('main').classList.remove('active');
+  document.getElementById('main-admin').classList.remove('active');
+  document.getElementById('profile-select').classList.add('active');
+  state.currentProfileId = null;
+  renderProfiles();
+}
 
+// ---------- CHILD TASKS ----------
+function renderChildTasks() {
+  const p = getCurrentProfile();
+  const myTasks = state.tasks.filter(t => t.assigneeId === p.id && !t.archived && !t.done);
   const list = document.getElementById('tasks-list');
-  const famList = document.getElementById('family-tasks-list');
 
   if (myTasks.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="emoji">📋</div><p>Aucune tâche pour toi.<br>Crée-en une ou attends qu'on t'en attribue !</p></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="emoji">📋</div><p>Aucune tâche pour le moment.<br>Un parent peut t’en attribuer.</p></div>`;
   } else {
-    list.innerHTML = myTasks.map(t => taskHTML(t, true)).join('');
-  }
-
-  if (familyTasks.length === 0) {
-    famList.innerHTML = `<div class="empty-state"><div class="emoji">🏠</div><p>Pas d'autres tâches en cours.</p></div>`;
-  } else {
-    famList.innerHTML = familyTasks.map(t => taskHTML(t, false)).join('');
-  }
-
-  // Bind events
-  document.querySelectorAll('.task-check').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      completeTask(btn.dataset.id);
-    });
-  });
-  document.querySelectorAll('.task-delete').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (confirm('Supprimer cette tâche ?')) {
-        deleteTask(btn.dataset.id);
-      }
-    });
-  });
-}
-
-function taskHTML(t, isMine) {
-  const assignee = state.profiles.find(p => p.id === t.assigneeId);
-  const doneClass = t.done ? 'done' : '';
-  const checkIcon = t.done ? '✓' : '';
-  return `
-    <div class="task-card ${doneClass}">
-      <button class="task-check" data-id="${t.id}">${checkIcon}</button>
-      <div class="task-info">
-        <div class="task-name">${t.name}</div>
-        <div class="task-meta">
-          <span class="task-points">${t.points} pts</span>
-          ${!isMine && assignee ? `<span>👤 ${assignee.name}</span>` : ''}
-          ${t.recurrence !== 'once' ? `<span>🔁 ${t.recurrence === 'daily' ? 'Quotidien' : 'Hebdo'}</span>` : ''}
+    list.innerHTML = myTasks.map(t => `
+      <div class="task-card">
+        <button class="task-check" data-id="${t.id}"></button>
+        <div class="task-info">
+          <div class="task-name">${t.name}</div>
+          <div class="task-meta">
+            <span class="task-points">${t.points} pts</span>
+            <span class="task-cat">${CATEGORY_LABELS[t.category] || t.category || ''}</span>
+            ${t.recurrence !== 'once' ? `<span>🔁 ${t.recurrence === 'daily' ? 'Quotidien' : 'Hebdo'}</span>` : ''}
+          </div>
         </div>
       </div>
-      <div class="task-actions">
-        <button class="task-delete" data-id="${t.id}" title="Supprimer">🗑️</button>
+    `).join('');
+  }
+
+  list.querySelectorAll('.task-check').forEach(btn => {
+    btn.addEventListener('click', () => openDifficultyModal(btn.dataset.id));
+  });
+
+  // Catalogue (lecture seule pour l'enfant)
+  const catList = document.getElementById('catalog-list');
+  const templates = state.templates.filter(t => t.active !== false);
+  if (templates.length === 0) {
+    catList.innerHTML = `<div class="empty-state"><div class="emoji">📚</div><p>Catalogue vide.</p></div>`;
+  } else {
+    const byCat = {};
+    templates.forEach(t => {
+      if (!byCat[t.category]) byCat[t.category] = [];
+      byCat[t.category].push(t);
+    });
+    catList.innerHTML = Object.entries(byCat).map(([cat, items]) => `
+      <div style="margin-bottom:0.8rem">
+        <div style="font-weight:700;font-size:0.9rem;margin-bottom:0.4rem;color:var(--text-muted)">${CATEGORY_LABELS[cat] || cat}</div>
+        ${items.map(t => `
+          <div class="catalog-card" style="margin-bottom:0.5rem">
+            <div class="task-name">${t.name}</div>
+            <div class="task-meta">
+              <span class="task-points">${t.points} pts</span>
+              <span>${t.difficulty}</span>
+            </div>
+          </div>
+        `).join('')}
       </div>
-    </div>`;
+    `).join('');
+  }
 }
 
-function completeTask(taskId) {
+function openDifficultyModal(taskId) {
   const task = state.tasks.find(t => t.id === taskId);
   if (!task || task.done) return;
+  pendingCompleteTaskId = taskId;
+  selectedFelt = 2;
+  document.getElementById('diff-task-name').textContent = task.name;
+  document.getElementById('diff-points').textContent = task.points;
+  document.querySelectorAll('.felt-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.felt) === 2);
+  });
+  openModal('modal-difficulty');
+}
 
+function confirmComplete() {
+  const task = state.tasks.find(t => t.id === pendingCompleteTaskId);
+  if (!task || task.done) return;
   const profile = state.profiles.find(p => p.id === task.assigneeId);
-  if (!profile) return;
+  if (!profile || profile.type !== 'child') return;
 
   task.done = true;
   task.completedAt = new Date().toISOString();
+  task.feltDifficulty = selectedFelt;
 
-  // Award points
   profile.points = (profile.points || 0) + task.points;
   profile.pointsTotal = (profile.pointsTotal || 0) + task.points;
   profile.tasksDone = (profile.tasksDone || 0) + 1;
-
-  // XP & Level
   profile.xp = (profile.xp || 0) + task.points;
+
   let leveled = false;
   while (profile.xp >= xpForLevel((profile.level || 1) + 1)) {
     profile.level = (profile.level || 1) + 1;
     leveled = true;
   }
 
-  // Recurrence: create new instance
   if (task.recurrence === 'daily' || task.recurrence === 'weekly') {
-    const newTask = {
+    task.archived = true;
+    state.tasks.push({
       ...task,
       id: 't_' + Date.now() + Math.random().toString(36).slice(2, 6),
       done: false,
       completedAt: null,
+      feltDifficulty: null,
+      archived: false,
       createdAt: new Date().toISOString(),
-    };
-    // Archive the completed one after a delay conceptually, but keep for history
-    task.archived = true;
-    state.tasks.push(newTask);
+    });
   }
 
   saveState();
-  renderTasks();
+  closeModal('modal-difficulty');
+  renderChildTasks();
   updateStatsBar();
   renderProgress();
 
@@ -430,39 +539,30 @@ function completeTask(taskId) {
   }
 }
 
-function deleteTask(taskId) {
-  state.tasks = state.tasks.filter(t => t.id !== taskId);
-  saveState();
-  renderTasks();
-  showToast('Tâche supprimée');
-}
-
-// ---------- WALLET ----------
+// ---------- WALLET / INVEST / PROGRESS (child only) ----------
 function renderWallet() {
   const p = getCurrentProfile();
   if (!p) return;
-
   document.getElementById('wallet-amount').textContent = formatMoney(p.wallet || 0);
   document.getElementById('wallet-ceiling').textContent = p.ceiling || 20;
   document.getElementById('wallet-converted').textContent = (p.convertedThisMonth || 0).toFixed(2);
+  document.getElementById('rate-display').textContent = state.settings.rate.toFixed(2).replace('.', ',');
 
   const remaining = (p.ceiling || 20) - (p.convertedThisMonth || 0);
   const hint = document.getElementById('convert-hint');
   if (remaining <= 0) {
-    hint.textContent = '⚠️ Plafond mensuel atteint. Plus de conversion possible ce mois-ci.';
+    hint.textContent = '⚠️ Plafond mensuel atteint.';
     hint.style.color = 'var(--danger)';
   } else {
     hint.textContent = `Il te reste ${remaining.toFixed(2)} € de plafond ce mois-ci.`;
     hint.style.color = 'var(--text-muted)';
   }
 
-  // History
   const hist = document.getElementById('wallet-history');
   const history = (p.walletHistory || []).slice(0, 15);
-  if (history.length === 0) {
-    hist.innerHTML = '<p class="hint">Aucune conversion ce mois-ci.</p>';
-  } else {
-    hist.innerHTML = history.map(h => `
+  hist.innerHTML = history.length === 0
+    ? '<p class="hint">Aucune conversion ce mois-ci.</p>'
+    : history.map(h => `
       <div class="history-item">
         <div>
           <div>${h.points} points → ${formatMoney(h.amount)}</div>
@@ -470,35 +570,24 @@ function renderWallet() {
         </div>
         <div class="amount">+${formatMoney(h.amount)}</div>
       </div>`).join('');
-  }
 }
 
 function updateConvertPreview() {
-  const input = document.getElementById('convert-points');
-  const pts = parseInt(input.value) || 0;
-  const amount = pts * state.settings.rate;
-  document.getElementById('convert-result').textContent = '= ' + formatMoney(amount);
+  const pts = parseInt(document.getElementById('convert-points').value) || 0;
+  document.getElementById('convert-result').textContent = '= ' + formatMoney(pts * state.settings.rate);
 }
 
 function convertPoints() {
   const p = getCurrentProfile();
-  if (!p) return;
-
+  if (!p || p.type !== 'child') return;
   const pts = parseInt(document.getElementById('convert-points').value) || 0;
-  if (pts <= 0) {
-    showToast('Entre un nombre de points valide');
-    return;
-  }
-  if (pts > (p.points || 0)) {
-    showToast('Pas assez de points !');
-    return;
-  }
+  if (pts <= 0) { showToast('Entre un nombre de points valide'); return; }
+  if (pts > (p.points || 0)) { showToast('Pas assez de points !'); return; }
 
   const amount = pts * state.settings.rate;
   const remainingCeiling = (p.ceiling || 20) - (p.convertedThisMonth || 0);
-
   if (amount > remainingCeiling + 0.001) {
-    showToast(`Plafond atteint. Maximum convertible : ${remainingCeiling.toFixed(2)} €`);
+    showToast(`Plafond atteint. Max : ${remainingCeiling.toFixed(2)} €`);
     return;
   }
 
@@ -507,35 +596,28 @@ function convertPoints() {
   p.convertedThisMonth = (p.convertedThisMonth || 0) + amount;
   p.moneyTotal = (p.moneyTotal || 0) + amount;
   p.walletHistory = p.walletHistory || [];
-  p.walletHistory.unshift({
-    date: new Date().toISOString(),
-    points: pts,
-    amount: amount
-  });
+  p.walletHistory.unshift({ date: new Date().toISOString(), points: pts, amount });
 
   saveState();
   document.getElementById('convert-points').value = '';
   updateConvertPreview();
   updateStatsBar();
   renderWallet();
-  showToast(`+${formatMoney(amount)} dans ton porte-monnaie ! 💰`);
+  showToast(`+${formatMoney(amount)} 💰`);
 }
 
-// ---------- INVEST ----------
 function renderInvest() {
   const p = getCurrentProfile();
   if (!p) return;
-
   const invested = p.investedPoints || 0;
   document.getElementById('invest-total').textContent = invested;
   document.getElementById('invest-monthly').textContent = Math.floor(invested * 0.10);
 
   const hist = document.getElementById('invest-history-list');
   const history = (p.investHistory || []).slice(0, 10);
-  if (history.length === 0) {
-    hist.innerHTML = '<p class="hint">Aucun revenu généré pour le moment.</p>';
-  } else {
-    hist.innerHTML = history.map(h => `
+  hist.innerHTML = history.length === 0
+    ? '<p class="hint">Aucun revenu pour le moment.</p>'
+    : history.map(h => `
       <div class="history-item">
         <div>
           <div>${h.type === 'interest' ? '📈 Intérêts mensuels' : '💼 Investissement'}</div>
@@ -543,44 +625,30 @@ function renderInvest() {
         </div>
         <div class="amount">${h.type === 'interest' ? '+' : ''}${h.amount} pts</div>
       </div>`).join('');
-  }
 }
 
 function investPoints() {
   const p = getCurrentProfile();
-  if (!p) return;
-
+  if (!p || p.type !== 'child') return;
   const pts = parseInt(document.getElementById('invest-points').value) || 0;
-  if (pts <= 0) {
-    showToast('Entre un nombre de points valide');
-    return;
-  }
-  if (pts > (p.points || 0)) {
-    showToast('Pas assez de points !');
-    return;
-  }
+  if (pts <= 0) { showToast('Entre un nombre valide'); return; }
+  if (pts > (p.points || 0)) { showToast('Pas assez de points !'); return; }
 
   p.points -= pts;
   p.investedPoints = (p.investedPoints || 0) + pts;
   p.investHistory = p.investHistory || [];
-  p.investHistory.unshift({
-    date: new Date().toISOString(),
-    amount: pts,
-    type: 'invest'
-  });
+  p.investHistory.unshift({ date: new Date().toISOString(), amount: pts, type: 'invest' });
 
   saveState();
   document.getElementById('invest-points').value = '';
   updateStatsBar();
   renderInvest();
-  showToast(`${pts} points investis dans ton entreprise ! 🏢`);
+  showToast(`${pts} points investis 🏢`);
 }
 
-// ---------- PROGRESS ----------
 function renderProgress() {
   const p = getCurrentProfile();
   if (!p) return;
-
   const level = p.level || 1;
   const xp = p.xp || 0;
   const nextXp = xpForLevel(level + 1);
@@ -593,9 +661,7 @@ function renderProgress() {
   document.getElementById('xp-fill').style.width = progress + '%';
   document.getElementById('xp-text').textContent = `${xp} / ${nextXp} XP`;
 
-  // Titles grid
-  const titlesList = document.getElementById('titles-list');
-  titlesList.innerHTML = TITLES.map(t => {
+  document.getElementById('titles-list').innerHTML = TITLES.map(t => {
     const unlocked = level >= t.level;
     return `
       <div class="title-item ${unlocked ? 'unlocked' : 'locked'}">
@@ -610,32 +676,266 @@ function renderProgress() {
   document.getElementById('stat-money-total').textContent = formatMoney(p.moneyTotal || 0);
 }
 
-// ---------- PROFILE MODAL ----------
-function openProfileModal(editId = null) {
-  editingProfileId = editId;
-  selectedAvatar = 'boy1';
-  document.getElementById('modal-profile-title').textContent = editId ? 'Modifier le profil' : 'Nouveau membre';
-  document.getElementById('profile-name').value = '';
-  document.getElementById('profile-ceiling').value = 20;
+// ---------- ADMIN ----------
+function renderAdminTasks() {
+  const list = document.getElementById('admin-tasks-list');
+  const active = state.tasks.filter(t => !t.archived && !t.done);
+  const done = state.tasks.filter(t => t.done && !t.archived).slice(0, 20);
+
+  if (active.length === 0 && done.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="emoji">📋</div><p>Aucune tâche en cours.<br>Attribue-en depuis l’onglet Attribuer.</p></div>`;
+    return;
+  }
+
+  let html = '';
+  if (active.length) {
+    html += `<div style="font-weight:700;margin-bottom:0.5rem;color:var(--text-muted)">En attente (${active.length})</div>`;
+    html += active.map(t => {
+      const child = state.profiles.find(p => p.id === t.assigneeId);
+      return `
+        <div class="task-card">
+          <div class="task-info">
+            <div class="task-name">${t.name}</div>
+            <div class="task-meta">
+              <span class="task-points">${t.points} pts</span>
+              <span>👤 ${child ? child.name : '?'}</span>
+              ${t.recurrence !== 'once' ? `<span>🔁</span>` : ''}
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="task-delete" data-id="${t.id}" title="Supprimer">🗑️</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+  if (done.length) {
+    html += `<div style="font-weight:700;margin:1rem 0 0.5rem;color:var(--text-muted)">Terminées récemment</div>`;
+    html += done.map(t => {
+      const child = state.profiles.find(p => p.id === t.assigneeId);
+      const felt = t.feltDifficulty ? FELT_LABELS[t.feltDifficulty] : '—';
+      return `
+        <div class="task-card done">
+          <div class="task-info">
+            <div class="task-name">${t.name}</div>
+            <div class="task-meta">
+              <span class="task-points">${t.points} pts</span>
+              <span>👤 ${child ? child.name : '?'}</span>
+              <span>Ressenti : ${felt}</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('.task-delete').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('Supprimer cette tâche ?')) {
+        state.tasks = state.tasks.filter(t => t.id !== btn.dataset.id);
+        saveState();
+        renderAdminTasks();
+        showToast('Tâche supprimée');
+      }
+    });
+  });
+}
+
+function renderAdminCatalog() {
+  const list = document.getElementById('admin-catalog-list');
+  const templates = state.templates || [];
+  if (templates.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="emoji">📚</div><p>Catalogue vide.</p></div>`;
+    return;
+  }
+  const byCat = {};
+  templates.forEach(t => {
+    if (!byCat[t.category]) byCat[t.category] = [];
+    byCat[t.category].push(t);
+  });
+  list.innerHTML = Object.entries(byCat).map(([cat, items]) => `
+    <div style="margin-bottom:1rem">
+      <div style="font-weight:700;font-size:0.9rem;margin-bottom:0.5rem;color:var(--text-muted)">${CATEGORY_LABELS[cat] || cat}</div>
+      ${items.map(t => `
+        <div class="task-card" style="margin-bottom:0.5rem;opacity:${t.active === false ? 0.5 : 1}">
+          <div class="task-info">
+            <div class="task-name">${t.name}</div>
+            <div class="task-meta">
+              <span class="task-points">${t.points} pts</span>
+              <span>${t.difficulty}</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            <button class="tpl-edit" data-id="${t.id}" title="Modifier">✏️</button>
+            <button class="tpl-delete" data-id="${t.id}" title="Supprimer">🗑️</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.tpl-edit').forEach(btn => {
+    btn.addEventListener('click', () => openTemplateModal(btn.dataset.id));
+  });
+  list.querySelectorAll('.tpl-delete').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('Supprimer cette tâche du catalogue ?')) {
+        state.templates = state.templates.filter(t => t.id !== btn.dataset.id);
+        saveState();
+        renderAdminCatalog();
+        renderAssignForm();
+        showToast('Tâche retirée du catalogue');
+      }
+    });
+  });
+}
+
+function renderAssignForm() {
+  const tplSelect = document.getElementById('assign-template');
+  const childSelect = document.getElementById('assign-child');
+  const templates = (state.templates || []).filter(t => t.active !== false);
+  const children = state.profiles.filter(p => p.type === 'child');
+
+  tplSelect.innerHTML = templates.length
+    ? templates.map(t => `<option value="${t.id}">${t.name} (${t.points} pts)</option>`).join('')
+    : '<option value="">— Aucune tâche —</option>';
+
+  childSelect.innerHTML = children.length
+    ? children.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
+    : '<option value="">— Aucun enfant —</option>';
+}
+
+function doAssign() {
+  const tplId = document.getElementById('assign-template').value;
+  const childId = document.getElementById('assign-child').value;
+  const recurrence = document.getElementById('assign-recurrence').value;
+  const tpl = state.templates.find(t => t.id === tplId);
+  const child = state.profiles.find(p => p.id === childId);
+
+  if (!tpl || !child) {
+    showToast('Choisis une tâche et un enfant');
+    return;
+  }
+
+  state.tasks.push({
+    id: 't_' + Date.now() + Math.random().toString(36).slice(2, 6),
+    templateId: tpl.id,
+    name: tpl.name,
+    category: tpl.category,
+    points: tpl.points,
+    difficulty: tpl.difficulty,
+    assigneeId: child.id,
+    recurrence,
+    done: false,
+    archived: false,
+    feltDifficulty: null,
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+  });
+
+  saveState();
+  renderAdminTasks();
+  showToast(`Tâche attribuée à ${child.name} ✔`);
+}
+
+function renderAdminFamily() {
+  const list = document.getElementById('admin-family-list');
+  if (state.profiles.length === 0) {
+    list.innerHTML = `<div class="empty-state"><p>Aucun membre.</p></div>`;
+    return;
+  }
+  list.innerHTML = state.profiles.map(p => {
+    const isParent = p.type === 'parent';
+    return `
+      <div class="family-card">
+        <img src="${avatarSVG(p.avatar, 48)}" alt="">
+        <div class="info">
+          <div class="fname">${p.name} ${isParent ? '🔑' : ''}</div>
+          <div class="fmeta">
+            ${isParent
+              ? 'Parent · Admin'
+              : `Niv. ${p.level || 1} · ${p.points || 0} pts · ${formatMoney(p.wallet || 0)} · ${p.tasksDone || 0} tâches`}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ---------- TEMPLATE MODAL ----------
+function openTemplateModal(editId = null) {
+  editingTemplateId = editId;
+  selectedTemplatePoints = 15;
+  document.getElementById('modal-template-title').textContent = editId ? 'Modifier la tâche' : 'Nouvelle tâche du catalogue';
+  document.getElementById('template-name').value = '';
+  document.getElementById('template-category').value = 'menage';
+  document.getElementById('template-difficulty').value = 'moyen';
+  document.getElementById('template-points-custom').value = '';
 
   if (editId) {
-    const p = state.profiles.find(x => x.id === editId);
-    if (p) {
-      document.getElementById('profile-name').value = p.name;
-      document.getElementById('profile-ceiling').value = p.ceiling || 20;
-      selectedAvatar = p.avatar;
+    const t = state.templates.find(x => x.id === editId);
+    if (t) {
+      document.getElementById('template-name').value = t.name;
+      document.getElementById('template-category').value = t.category;
+      document.getElementById('template-difficulty').value = t.difficulty;
+      selectedTemplatePoints = t.points;
+      document.getElementById('template-points-custom').value = t.points;
     }
   }
 
-  // Render avatars
+  document.querySelectorAll('#template-points-selector .diff-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.points) === selectedTemplatePoints);
+  });
+  openModal('modal-template');
+}
+
+function saveTemplate() {
+  const name = document.getElementById('template-name').value.trim();
+  if (!name) { showToast('Le nom est obligatoire'); return; }
+
+  const custom = parseInt(document.getElementById('template-points-custom').value);
+  const points = (!isNaN(custom) && custom > 0) ? custom : selectedTemplatePoints;
+  const category = document.getElementById('template-category').value;
+  const difficulty = document.getElementById('template-difficulty').value;
+
+  if (editingTemplateId) {
+    const t = state.templates.find(x => x.id === editingTemplateId);
+    if (t) {
+      t.name = name;
+      t.points = points;
+      t.category = category;
+      t.difficulty = difficulty;
+    }
+  } else {
+    state.templates.push({
+      id: 'tpl_' + Date.now(),
+      name, points, category, difficulty, active: true,
+    });
+  }
+  saveState();
+  closeModal('modal-template');
+  renderAdminCatalog();
+  renderAssignForm();
+  showToast(editingTemplateId ? 'Tâche modifiée' : 'Tâche ajoutée au catalogue ✔');
+}
+
+// ---------- PROFILE MODAL ----------
+function openProfileModal() {
+  editingProfileId = null;
+  selectedAvatar = 'boy1';
+  selectedProfileType = 'child';
+  document.getElementById('modal-profile-title').textContent = 'Nouveau membre';
+  document.getElementById('profile-name').value = '';
+  document.getElementById('profile-password').value = '';
+  document.getElementById('profile-ceiling').value = 20;
+  document.getElementById('group-password').style.display = 'none';
+  document.getElementById('group-ceiling').style.display = 'block';
+  document.querySelectorAll('.type-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.type === 'child');
+  });
+
   const grid = document.getElementById('avatars-grid');
   grid.innerHTML = AVATARS.map(a => `
     <img class="avatar-option ${a.id === selectedAvatar ? 'selected' : ''}"
-         src="${avatarSVG(a.id, 64)}"
-         data-id="${a.id}"
-         alt="${a.emoji}">
+         src="${avatarSVG(a.id, 64)}" data-id="${a.id}" alt="">
   `).join('');
-
   grid.querySelectorAll('.avatar-option').forEach(img => {
     img.addEventListener('click', () => {
       selectedAvatar = img.dataset.id;
@@ -643,30 +943,34 @@ function openProfileModal(editId = null) {
       img.classList.add('selected');
     });
   });
-
   openModal('modal-profile');
 }
 
-function saveProfile() {
+async function saveProfile() {
   const name = document.getElementById('profile-name').value.trim();
-  if (!name) {
-    showToast('Le prénom est obligatoire');
-    return;
-  }
-  const ceiling = parseFloat(document.getElementById('profile-ceiling').value) || 20;
+  if (!name) { showToast('Le prénom est obligatoire'); return; }
 
-  if (editingProfileId) {
-    const p = state.profiles.find(x => x.id === editingProfileId);
-    if (p) {
-      p.name = name;
-      p.avatar = selectedAvatar;
-      p.ceiling = ceiling;
+  if (selectedProfileType === 'parent') {
+    const pwd = document.getElementById('profile-password').value;
+    if (!pwd || pwd.length < 3) {
+      showToast('Mot de passe parent requis (min. 3 caractères)');
+      return;
     }
-  } else {
+    const passwordHash = await hashPassword(pwd);
     state.profiles.push({
       id: 'p_' + Date.now(),
       name,
       avatar: selectedAvatar,
+      type: 'parent',
+      passwordHash,
+    });
+  } else {
+    const ceiling = parseFloat(document.getElementById('profile-ceiling').value) || 20;
+    state.profiles.push({
+      id: 'p_' + Date.now(),
+      name,
+      avatar: selectedAvatar,
+      type: 'child',
       ceiling,
       points: 0,
       wallet: 0,
@@ -685,54 +989,10 @@ function saveProfile() {
   saveState();
   closeModal('modal-profile');
   renderProfiles();
-  showToast(editingProfileId ? 'Profil modifié' : `${name} a rejoint la famille ! 🎉`);
+  showToast(`${name} a rejoint la famille ! 🎉`);
 }
 
-// ---------- TASK MODAL ----------
-function openTaskModal() {
-  document.getElementById('task-name').value = '';
-  selectedDifficulty = 15;
-  document.querySelectorAll('.diff-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.points) === 15);
-  });
-
-  // Fill assignees
-  const select = document.getElementById('task-assignee');
-  select.innerHTML = state.profiles.map(p =>
-    `<option value="${p.id}" ${p.id === state.currentProfileId ? 'selected' : ''}>${p.name}</option>`
-  ).join('');
-
-  openModal('modal-task');
-}
-
-function saveTask() {
-  const name = document.getElementById('task-name').value.trim();
-  if (!name) {
-    showToast('Le nom de la tâche est obligatoire');
-    return;
-  }
-  const assigneeId = document.getElementById('task-assignee').value;
-  const recurrence = document.getElementById('task-recurrence').value;
-
-  state.tasks.push({
-    id: 't_' + Date.now() + Math.random().toString(36).slice(2, 6),
-    name,
-    points: selectedDifficulty,
-    assigneeId,
-    recurrence,
-    done: false,
-    archived: false,
-    createdAt: new Date().toISOString(),
-    completedAt: null,
-  });
-
-  saveState();
-  closeModal('modal-task');
-  renderTasks();
-  showToast('Tâche créée ! 📋');
-}
-
-// ---------- THEMES ----------
+// ---------- THEMES / SETTINGS ----------
 function applyTheme(theme) {
   document.body.className = theme === 'default' ? '' : `theme-${theme}`;
   state.settings.theme = theme;
@@ -750,11 +1010,8 @@ function renderThemes() {
     { id: 'dark', label: 'Sombre' },
   ];
   grid.innerHTML = themes.map(t => `
-    <button class="theme-btn ${state.settings.theme === t.id ? 'selected' : ''}" data-theme="${t.id}">
-      ${t.label}
-    </button>
+    <button class="theme-btn ${state.settings.theme === t.id ? 'selected' : ''}" data-theme="${t.id}">${t.label}</button>
   `).join('');
-
   grid.querySelectorAll('.theme-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       applyTheme(btn.dataset.theme);
@@ -764,7 +1021,6 @@ function renderThemes() {
   });
 }
 
-// ---------- SETTINGS ----------
 function openSettings() {
   document.getElementById('rate-input').value = state.settings.rate;
   renderThemes();
@@ -772,7 +1028,6 @@ function openSettings() {
   openModal('modal-settings');
 }
 
-// ---------- EXPORT / IMPORT / RESET ----------
 function simpleChecksum(str) {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
@@ -783,27 +1038,19 @@ function simpleChecksum(str) {
 }
 
 function exportData() {
-  // Crée d'abord une auto-backup avant d'exporter
   createAutoBackup();
-
   const payload = {
     app: 'Chores',
     version: APP_VERSION,
     exportedAt: new Date().toISOString(),
-    profilesCount: state.profiles.length,
-    tasksCount: state.tasks.length,
     data: state,
   };
-  const json = JSON.stringify(payload, null, 2);
   payload.checksum = simpleChecksum(JSON.stringify(payload.data));
-  const finalJson = JSON.stringify(payload, null, 2);
-
-  const blob = new Blob([finalJson], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  const dateStr = new Date().toISOString().slice(0, 10);
-  a.download = `chores-backup-${dateStr}.json`;
+  a.download = `chores-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
   showToast('Sauvegarde exportée ✔');
@@ -820,49 +1067,29 @@ function importData() {
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target.result);
-
-        // Accepte le nouveau format (avec envelope) ou l'ancien (state direct)
         let data = null;
         if (parsed.data && parsed.data.profiles) {
-          // Nouveau format avec métadonnées
           if (parsed.checksum) {
             const expected = simpleChecksum(JSON.stringify(parsed.data));
             if (expected !== parsed.checksum) {
-              if (!confirm('⚠️ Le fichier semble corrompu (checksum incorrect).\nVoulez-vous quand même essayer de le restaurer ?')) {
-                return;
-              }
+              if (!confirm('⚠️ Checksum incorrect. Restaurer quand même ?')) return;
             }
           }
           data = parsed.data;
-        } else if (parsed.profiles && Array.isArray(parsed.profiles)) {
-          // Ancien format
+        } else if (parsed.profiles) {
           data = parsed;
         }
-
         if (!data || !Array.isArray(data.profiles)) {
-          showToast('Fichier de sauvegarde invalide');
+          showToast('Fichier invalide');
           return;
         }
-
-        const dateInfo = parsed.exportedAt
-          ? `\nExporté le : ${formatDateTime(parsed.exportedAt)}`
-          : '';
-        const confirmMsg =
-          `Restaurer cette sauvegarde ?${dateInfo}\n` +
-          `${data.profiles.length} membre(s), ${data.tasks ? data.tasks.length : 0} tâche(s).\n\n` +
-          `Les données actuelles seront remplacées (une sauvegarde auto sera gardée).`;
-
-        if (!confirm(confirmMsg)) return;
-
-        // Sauvegarde l'état actuel avant d'écraser
+        if (!confirm('Restaurer cette sauvegarde ?\nLes données actuelles seront remplacées.')) return;
         createAutoBackup();
-
         state = { ...state, ...data };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
         showToast('Sauvegarde restaurée ✔');
         setTimeout(() => location.reload(), 600);
-      } catch (err) {
-        console.error(err);
+      } catch {
         showToast('Erreur de lecture du fichier');
       }
     };
@@ -872,26 +1099,34 @@ function importData() {
 }
 
 function resetApp() {
-  if (!confirm('⚠️ Tout sera effacé (profils, tâches, points…).\n\nUne dernière sauvegarde automatique sera conservée.')) {
-    return;
-  }
+  if (!confirm('⚠️ Tout sera effacé.\nUne dernière sauvegarde auto sera conservée.')) return;
   createAutoBackup();
   localStorage.removeItem(STORAGE_KEY);
-  // On garde BACKUP_KEY volontairement pour pouvoir restaurer
   showToast('Application réinitialisée');
   setTimeout(() => location.reload(), 600);
 }
 
 // ---------- TABS ----------
-function switchTab(tabId) {
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.nav-btn[data-tab="${tabId}"]`).classList.add('active');
-  document.getElementById(`tab-${tabId}`).classList.add('active');
+function switchTab(tabId, navRoot) {
+  const root = navRoot || document;
+  root.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  // Find parent screen
+  const screen = document.querySelector('.screen.active');
+  if (!screen) return;
+  screen.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  screen.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const btn = screen.querySelector(`.nav-btn[data-tab="${tabId}"]`);
+  if (btn) btn.classList.add('active');
+  const tab = document.getElementById(`tab-${tabId}`);
+  if (tab) tab.classList.add('active');
 
   if (tabId === 'wallet') renderWallet();
   if (tabId === 'invest') renderInvest();
   if (tabId === 'progress') renderProgress();
+  if (tabId === 'admin-tasks') renderAdminTasks();
+  if (tabId === 'admin-catalog') renderAdminCatalog();
+  if (tabId === 'admin-assign') renderAssignForm();
+  if (tabId === 'admin-family') renderAdminFamily();
 }
 
 // ---------- INIT ----------
@@ -900,54 +1135,80 @@ function init() {
   checkMonthlyReset();
   applyTheme(state.settings.theme || 'default');
 
-  // Splash
   setTimeout(() => {
     document.getElementById('splash').classList.remove('active');
     document.getElementById('profile-select').classList.add('active');
     renderProfiles();
-  }, 1200);
+  }, 1000);
 
-  // Events
-  document.getElementById('btn-add-profile').addEventListener('click', () => openProfileModal());
+  document.getElementById('btn-add-profile').addEventListener('click', openProfileModal);
   document.getElementById('btn-save-profile').addEventListener('click', saveProfile);
-  document.getElementById('btn-add-task').addEventListener('click', openTaskModal);
-  document.getElementById('btn-save-task').addEventListener('click', saveTask);
-  document.getElementById('btn-back-profiles').addEventListener('click', () => {
-    document.getElementById('main').classList.remove('active');
-    document.getElementById('profile-select').classList.add('active');
-    renderProfiles();
+  document.getElementById('btn-check-password').addEventListener('click', checkPassword);
+  document.getElementById('password-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') checkPassword();
   });
+
+  document.getElementById('btn-back-profiles').addEventListener('click', backToProfiles);
+  document.getElementById('btn-back-profiles-admin').addEventListener('click', backToProfiles);
   document.getElementById('btn-settings').addEventListener('click', openSettings);
   document.getElementById('btn-theme').addEventListener('click', openSettings);
+  document.getElementById('btn-theme-admin').addEventListener('click', openSettings);
+
   document.getElementById('btn-convert').addEventListener('click', convertPoints);
   document.getElementById('btn-invest').addEventListener('click', investPoints);
   document.getElementById('convert-points').addEventListener('input', updateConvertPreview);
+  document.getElementById('btn-confirm-complete').addEventListener('click', confirmComplete);
+
+  document.getElementById('btn-add-template').addEventListener('click', () => openTemplateModal());
+  document.getElementById('btn-save-template').addEventListener('click', saveTemplate);
+  document.getElementById('btn-do-assign').addEventListener('click', doAssign);
+
   document.getElementById('btn-export').addEventListener('click', exportData);
   document.getElementById('btn-import').addEventListener('click', importData);
   document.getElementById('btn-reset').addEventListener('click', resetApp);
 
-  document.getElementById('rate-input').addEventListener('change', (e) => {
+  document.getElementById('rate-input').addEventListener('change', e => {
     state.settings.rate = parseFloat(e.target.value) || 0.10;
     saveState();
   });
 
-  // Difficulty buttons
-  document.querySelectorAll('.diff-btn').forEach(btn => {
+  // Type selector
+  document.querySelectorAll('.type-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      selectedDifficulty = parseInt(btn.dataset.points);
-      document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+      selectedProfileType = btn.dataset.type;
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('group-password').style.display = selectedProfileType === 'parent' ? 'block' : 'none';
+      document.getElementById('group-ceiling').style.display = selectedProfileType === 'child' ? 'block' : 'none';
+    });
+  });
+
+  // Felt difficulty
+  document.querySelectorAll('.felt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedFelt = parseInt(btn.dataset.felt);
+      document.querySelectorAll('.felt-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     });
   });
 
-  // Nav tabs
+  // Template points
+  document.querySelectorAll('#template-points-selector .diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedTemplatePoints = parseInt(btn.dataset.points);
+      document.querySelectorAll('#template-points-selector .diff-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('template-points-custom').value = '';
+    });
+  });
+
+  // Nav tabs (both screens)
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  // Close modals on backdrop click
   document.querySelectorAll('.modal').forEach(modal => {
-    modal.addEventListener('click', (e) => {
+    modal.addEventListener('click', e => {
       if (e.target === modal) closeModal(modal.id);
     });
   });

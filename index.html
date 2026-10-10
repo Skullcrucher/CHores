@@ -12,7 +12,6 @@
 </head>
 <body>
   <div id="app">
-    <!-- Écran de chargement -->
     <div id="splash" class="screen active">
       <div class="splash-content">
         <div class="logo">🏠</div>
@@ -22,7 +21,6 @@
       </div>
     </div>
 
-    <!-- Sélection / Création de profil -->
     <div id="profile-select" class="screen">
       <header>
         <h1>Qui es-tu ?</h1>
@@ -32,7 +30,20 @@
       <button id="btn-add-profile" class="btn-primary btn-large">+ Ajouter un membre</button>
     </div>
 
-    <!-- Modal création profil -->
+    <div id="modal-password" class="modal">
+      <div class="modal-content">
+        <h2>Accès parent</h2>
+        <p class="hint" id="password-hint">Entre le mot de passe pour continuer</p>
+        <div class="form-group">
+          <input type="password" id="password-input" placeholder="Mot de passe" autocomplete="off">
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal('modal-password')">Annuler</button>
+          <button class="btn-primary" id="btn-check-password">Valider</button>
+        </div>
+      </div>
+    </div>
+
     <div id="modal-profile" class="modal">
       <div class="modal-content">
         <h2 id="modal-profile-title">Nouveau membre</h2>
@@ -41,12 +52,24 @@
           <input type="text" id="profile-name" placeholder="Ex: Léa" maxlength="20">
         </div>
         <div class="form-group">
-          <label>Choisis ton avatar</label>
-          <div class="avatars-grid" id="avatars-grid"></div>
+          <label>Type de profil</label>
+          <div class="type-selector">
+            <button type="button" class="type-btn active" data-type="child">👶 Enfant</button>
+            <button type="button" class="type-btn" data-type="parent">👤 Parent (admin)</button>
+          </div>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="group-password" style="display:none">
+          <label>Mot de passe parent</label>
+          <input type="password" id="profile-password" placeholder="Choisis un mot de passe" autocomplete="new-password">
+          <p class="hint">Obligatoire. Protège l’accès admin.</p>
+        </div>
+        <div class="form-group" id="group-ceiling">
           <label>Plafond d'argent de poche mensuel (€)</label>
           <input type="number" id="profile-ceiling" value="20" min="0" max="500" step="1">
+        </div>
+        <div class="form-group">
+          <label>Choisis ton avatar</label>
+          <div class="avatars-grid" id="avatars-grid"></div>
         </div>
         <div class="modal-actions">
           <button class="btn-secondary" onclick="closeModal('modal-profile')">Annuler</button>
@@ -55,7 +78,7 @@
       </div>
     </div>
 
-    <!-- Écran principal -->
+    <!-- ENFANT -->
     <div id="main" class="screen">
       <header class="main-header">
         <button class="icon-btn" id="btn-back-profiles" title="Changer de profil">👤</button>
@@ -69,27 +92,13 @@
         <button class="icon-btn" id="btn-theme" title="Thème">🎨</button>
       </header>
 
-      <!-- Stats rapides -->
       <div class="stats-bar">
-        <div class="stat">
-          <span class="stat-value" id="stat-points">0</span>
-          <span class="stat-label">Points</span>
-        </div>
-        <div class="stat">
-          <span class="stat-value" id="stat-wallet">0 €</span>
-          <span class="stat-label">Porte-monnaie</span>
-        </div>
-        <div class="stat">
-          <span class="stat-value" id="stat-level">1</span>
-          <span class="stat-label">Niveau</span>
-        </div>
-        <div class="stat">
-          <span class="stat-value" id="stat-invest">0</span>
-          <span class="stat-label">Investis</span>
-        </div>
+        <div class="stat"><span class="stat-value" id="stat-points">0</span><span class="stat-label">Points</span></div>
+        <div class="stat"><span class="stat-value" id="stat-wallet">0 €</span><span class="stat-label">Porte-monnaie</span></div>
+        <div class="stat"><span class="stat-value" id="stat-level">1</span><span class="stat-label">Niveau</span></div>
+        <div class="stat"><span class="stat-value" id="stat-invest">0</span><span class="stat-label">Investis</span></div>
       </div>
 
-      <!-- Navigation -->
       <nav class="bottom-nav">
         <button class="nav-btn active" data-tab="tasks">📋 Tâches</button>
         <button class="nav-btn" data-tab="wallet">💰 Portefeuille</button>
@@ -97,22 +106,17 @@
         <button class="nav-btn" data-tab="progress">🏆 Progrès</button>
       </nav>
 
-      <!-- Contenu des onglets -->
       <div class="tab-content">
-        <!-- TÂCHES -->
         <div id="tab-tasks" class="tab active">
-          <div class="section-header">
-            <h2>Mes tâches</h2>
-            <button class="btn-primary btn-sm" id="btn-add-task">+ Nouvelle tâche</button>
-          </div>
+          <div class="section-header"><h2>Mes tâches</h2></div>
           <div id="tasks-list" class="tasks-list"></div>
           <div class="section-header" style="margin-top:1.5rem">
-            <h2>Tâches de la famille</h2>
+            <h2>Catalogue</h2>
           </div>
-          <div id="family-tasks-list" class="tasks-list"></div>
+          <p class="hint" style="margin-bottom:0.8rem">Demande à un parent de t’attribuer une tâche, ou regarde ce qui est disponible.</p>
+          <div id="catalog-list" class="tasks-list"></div>
         </div>
 
-        <!-- PORTEFEUILLE -->
         <div id="tab-wallet" class="tab">
           <div class="wallet-card">
             <h3>Porte-monnaie</h3>
@@ -122,7 +126,7 @@
           </div>
           <div class="convert-box">
             <h3>Convertir des points</h3>
-            <p>1 point = 0,10 €</p>
+            <p>1 point = <span id="rate-display">0,10</span> €</p>
             <div class="convert-row">
               <input type="number" id="convert-points" min="1" placeholder="Points">
               <span class="convert-result" id="convert-result">= 0,00 €</span>
@@ -136,26 +140,19 @@
           </div>
         </div>
 
-        <!-- ENTREPRISE (Idle) -->
         <div id="tab-invest" class="tab">
           <div class="invest-card">
             <h3>🏢 Mon Entreprise</h3>
-            <p class="invest-desc">Investis tes points restants ! Ils génèrent <strong>+10 %</strong> de points convertibles chaque mois.</p>
+            <p class="invest-desc">Investis tes points restants ! Ils génèrent <strong>+10 %</strong> de points chaque mois.</p>
             <div class="invest-stats">
-              <div>
-                <span class="big-number" id="invest-total">0</span>
-                <span>Points investis</span>
-              </div>
-              <div>
-                <span class="big-number" id="invest-monthly">0</span>
-                <span>Générés / mois</span>
-              </div>
+              <div><span class="big-number" id="invest-total">0</span><span>Points investis</span></div>
+              <div><span class="big-number" id="invest-monthly">0</span><span>Générés / mois</span></div>
             </div>
             <div class="convert-row">
               <input type="number" id="invest-points" min="1" placeholder="Points à investir">
               <button class="btn-primary" id="btn-invest">Investir</button>
             </div>
-            <p class="hint">Les points investis ne peuvent plus être convertis en argent. Ils restent dans l’entreprise et produisent des intérêts chaque mois.</p>
+            <p class="hint">Les points investis ne peuvent plus être convertis en argent.</p>
           </div>
           <div class="invest-history">
             <h3>Revenus générés</h3>
@@ -163,16 +160,11 @@
           </div>
         </div>
 
-        <!-- PROGRESSION -->
         <div id="tab-progress" class="tab">
           <div class="level-card">
-            <div class="level-circle">
-              <span id="level-number">1</span>
-            </div>
+            <div class="level-circle"><span id="level-number">1</span></div>
             <h3 id="level-title">Débutant</h3>
-            <div class="xp-bar">
-              <div class="xp-fill" id="xp-fill"></div>
-            </div>
+            <div class="xp-bar"><div class="xp-fill" id="xp-fill"></div></div>
             <p id="xp-text">0 / 100 XP</p>
           </div>
           <div class="titles-section">
@@ -189,44 +181,143 @@
       </div>
     </div>
 
-    <!-- Modal nouvelle tâche -->
-    <div id="modal-task" class="modal">
-      <div class="modal-content">
-        <h2>Nouvelle tâche</h2>
-        <div class="form-group">
-          <label>Nom de la tâche</label>
-          <input type="text" id="task-name" placeholder="Ex: Vider le lave-vaisselle" maxlength="40">
-        </div>
-        <div class="form-group">
-          <label>Difficulté (points)</label>
-          <div class="difficulty-selector">
-            <button class="diff-btn" data-points="5">⭐ 5</button>
-            <button class="diff-btn" data-points="10">⭐⭐ 10</button>
-            <button class="diff-btn active" data-points="15">⭐⭐⭐ 15</button>
-            <button class="diff-btn" data-points="25">⭐⭐⭐⭐ 25</button>
-            <button class="diff-btn" data-points="40">🔥 40</button>
+    <!-- PARENT ADMIN -->
+    <div id="main-admin" class="screen">
+      <header class="main-header">
+        <button class="icon-btn" id="btn-back-profiles-admin" title="Changer de profil">👤</button>
+        <div class="user-info">
+          <img id="admin-avatar" class="avatar-sm" src="" alt="">
+          <div>
+            <span id="admin-name"></span>
+            <span class="title-badge">🔑 Admin</span>
           </div>
         </div>
-        <div class="form-group">
-          <label>Attribuer à</label>
-          <select id="task-assignee"></select>
+        <button class="icon-btn" id="btn-theme-admin" title="Thème">🎨</button>
+      </header>
+
+      <nav class="bottom-nav">
+        <button class="nav-btn active" data-tab="admin-tasks">📋 En cours</button>
+        <button class="nav-btn" data-tab="admin-catalog">📚 Catalogue</button>
+        <button class="nav-btn" data-tab="admin-assign">➕ Attribuer</button>
+        <button class="nav-btn" data-tab="admin-family">👨‍👩‍👧‍👦 Famille</button>
+      </nav>
+
+      <div class="tab-content">
+        <div id="tab-admin-tasks" class="tab active">
+          <div class="section-header"><h2>Tâches en cours</h2></div>
+          <div id="admin-tasks-list" class="tasks-list"></div>
         </div>
-        <div class="form-group">
-          <label>Récurrence</label>
-          <select id="task-recurrence">
-            <option value="once">Une seule fois</option>
-            <option value="daily">Tous les jours</option>
-            <option value="weekly">Chaque semaine</option>
-          </select>
+
+        <div id="tab-admin-catalog" class="tab">
+          <div class="section-header">
+            <h2>Catalogue de tâches</h2>
+            <button class="btn-primary btn-sm" id="btn-add-template">+ Nouvelle</button>
+          </div>
+          <p class="hint" style="margin-bottom:0.8rem">Les points sont fixés ici. L’enfant note seulement la difficulté ressentie.</p>
+          <div id="admin-catalog-list" class="tasks-list"></div>
         </div>
-        <div class="modal-actions">
-          <button class="btn-secondary" onclick="closeModal('modal-task')">Annuler</button>
-          <button class="btn-primary" id="btn-save-task">Créer</button>
+
+        <div id="tab-admin-assign" class="tab">
+          <div class="section-header"><h2>Attribuer une tâche</h2></div>
+          <div class="form-card">
+            <div class="form-group">
+              <label>Tâche du catalogue</label>
+              <select id="assign-template"></select>
+            </div>
+            <div class="form-group">
+              <label>Attribuer à</label>
+              <select id="assign-child"></select>
+            </div>
+            <div class="form-group">
+              <label>Récurrence</label>
+              <select id="assign-recurrence">
+                <option value="once">Une seule fois</option>
+                <option value="daily">Tous les jours</option>
+                <option value="weekly">Chaque semaine</option>
+              </select>
+            </div>
+            <button class="btn-primary btn-large" id="btn-do-assign">Attribuer la tâche</button>
+          </div>
+        </div>
+
+        <div id="tab-admin-family" class="tab">
+          <div class="section-header"><h2>Membres de la famille</h2></div>
+          <div id="admin-family-list" class="tasks-list"></div>
         </div>
       </div>
     </div>
 
-    <!-- Modal paramètres -->
+    <!-- Modal difficulté ressentie -->
+    <div id="modal-difficulty" class="modal">
+      <div class="modal-content">
+        <h2>Tâche terminée !</h2>
+        <p id="diff-task-name" class="hint" style="margin-bottom:1rem"></p>
+        <div class="form-group">
+          <label>Comment as-tu trouvé cette tâche ?</label>
+          <div class="difficulty-felt">
+            <button class="felt-btn" data-felt="1">😊 Facile</button>
+            <button class="felt-btn active" data-felt="2">😐 Normale</button>
+            <button class="felt-btn" data-felt="3">😓 Difficile</button>
+            <button class="felt-btn" data-felt="4">🔥 Très dure</button>
+          </div>
+        </div>
+        <p class="hint">Tes points sont fixés par les parents (<strong id="diff-points">0</strong> pts). Ta note sert au suivi.</p>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal('modal-difficulty')">Annuler</button>
+          <button class="btn-primary" id="btn-confirm-complete">Valider (+ points)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal template admin -->
+    <div id="modal-template" class="modal">
+      <div class="modal-content">
+        <h2 id="modal-template-title">Nouvelle tâche du catalogue</h2>
+        <div class="form-group">
+          <label>Nom de la tâche</label>
+          <input type="text" id="template-name" placeholder="Ex: Vider le lave-vaisselle" maxlength="50">
+        </div>
+        <div class="form-group">
+          <label>Catégorie</label>
+          <select id="template-category">
+            <option value="cuisine">🍳 Cuisine</option>
+            <option value="menage">🧹 Ménage</option>
+            <option value="linge">👕 Linge</option>
+            <option value="exterieur">🌳 Extérieur</option>
+            <option value="animaux">🐾 Animaux</option>
+            <option value="autre">📦 Autre</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Points attribués (fixés par l’admin)</label>
+          <div class="difficulty-selector" id="template-points-selector">
+            <button class="diff-btn" data-points="5">5</button>
+            <button class="diff-btn" data-points="10">10</button>
+            <button class="diff-btn active" data-points="15">15</button>
+            <button class="diff-btn" data-points="20">20</button>
+            <button class="diff-btn" data-points="25">25</button>
+            <button class="diff-btn" data-points="30">30</button>
+            <button class="diff-btn" data-points="40">40</button>
+            <button class="diff-btn" data-points="50">50</button>
+          </div>
+          <p class="hint">Ou saisis : <input type="number" id="template-points-custom" min="1" max="200" style="width:70px" placeholder="pts"></p>
+        </div>
+        <div class="form-group">
+          <label>Niveau de difficulté (indicatif)</label>
+          <select id="template-difficulty">
+            <option value="facile">Facile</option>
+            <option value="moyen" selected>Moyen</option>
+            <option value="difficile">Difficile</option>
+            <option value="expert">Expert</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal('modal-template')">Annuler</button>
+          <button class="btn-primary" id="btn-save-template">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+
     <div id="modal-settings" class="modal">
       <div class="modal-content">
         <h2>Paramètres</h2>
@@ -240,9 +331,9 @@
         </div>
         <div class="form-group">
           <label>💾 Sauvegardes</label>
-          <p class="hint" style="margin-bottom:0.6rem">Une sauvegarde automatique est créée à chaque modification importante.</p>
+          <p class="hint" style="margin-bottom:0.6rem">Sauvegarde auto à chaque modification importante.</p>
           <div id="auto-backups-list" class="backups-list"></div>
-          <button class="btn-primary btn-block" id="btn-export" style="margin-top:0.6rem">📥 Exporter une copie (fichier)</button>
+          <button class="btn-primary btn-block" id="btn-export" style="margin-top:0.6rem">📥 Exporter une copie</button>
           <button class="btn-secondary btn-block" id="btn-import">📤 Restaurer depuis un fichier</button>
           <button class="btn-danger btn-block" id="btn-reset">🗑️ Réinitialiser l’application</button>
         </div>
@@ -252,10 +343,8 @@
       </div>
     </div>
 
-    <!-- Toast notifications -->
     <div id="toast" class="toast"></div>
   </div>
-
   <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
