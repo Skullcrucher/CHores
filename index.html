@@ -89,15 +89,14 @@
             <span id="current-title" class="title-badge"></span>
           </div>
         </div>
+        <div class="stats-bar">
+          <div class="stat"><span class="stat-value" id="stat-points">0</span><span class="stat-label">Points</span></div>
+          <div class="stat"><span class="stat-value" id="stat-wallet">0 €</span><span class="stat-label">Argent</span></div>
+          <div class="stat"><span class="stat-value" id="stat-level">1</span><span class="stat-label">Niveau</span></div>
+          <div class="stat"><span class="stat-value" id="stat-invest">0</span><span class="stat-label">Investis</span></div>
+        </div>
         <button class="icon-btn" id="btn-theme" title="Thème">🎨</button>
       </header>
-
-      <div class="stats-bar">
-        <div class="stat"><span class="stat-value" id="stat-points">0</span><span class="stat-label">Points</span></div>
-        <div class="stat"><span class="stat-value" id="stat-wallet">0 €</span><span class="stat-label">Porte-monnaie</span></div>
-        <div class="stat"><span class="stat-value" id="stat-level">1</span><span class="stat-label">Niveau</span></div>
-        <div class="stat"><span class="stat-value" id="stat-invest">0</span><span class="stat-label">Investis</span></div>
-      </div>
 
       <nav class="bottom-nav">
         <button class="nav-btn active" data-tab="tasks">📋 Tâches</button>
@@ -108,12 +107,16 @@
 
       <div class="tab-content">
         <div id="tab-tasks" class="tab active">
+         <div class="tasks-layout">
+          <div class="tasks-col">
           <div class="section-header">
             <h2>Mes tâches</h2>
             <span class="hint" id="daily-limit-label">0 / 3 aujourd'hui</span>
           </div>
           <div id="tasks-list" class="tasks-list"></div>
-          <div class="section-header" style="margin-top:1.5rem">
+          </div>
+          <div class="tasks-col">
+          <div class="section-header">
             <h2>Choisir une tâche</h2>
           </div>
           <div class="search-box">
@@ -121,6 +124,8 @@
           </div>
           <div class="category-filters" id="category-filters"></div>
           <div id="catalog-list" class="tasks-list"></div>
+          </div>
+         </div>
         </div>
 
         <div id="tab-wallet" class="tab">
@@ -147,15 +152,11 @@
         </div>
 
         <div id="tab-invest" class="tab">
-          <div class="company-hero" id="company-hero"></div>
-          <div class="company-kpis" id="company-kpis"></div>
-          <div class="segmented" id="company-views">
-            <button class="seg-btn active" data-action="view" data-id="sites">🏗️ Chantiers</button>
-            <button class="seg-btn" data-action="view" data-id="contracts">📜 Contrats</button>
-            <button class="seg-btn" data-action="view" data-id="treasury">🏦 Trésorerie</button>
-            <button class="seg-btn" data-action="view" data-id="journal">📊 Journal</button>
+          <div class="company-bar" id="company-bar"></div>
+          <div class="company-layout">
+            <section id="company-branches"></section>
+            <aside id="company-side"></aside>
           </div>
-          <div id="company-view"></div>
         </div>
 
         <div id="tab-progress" class="tab">
