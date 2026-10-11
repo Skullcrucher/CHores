@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.6.1';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -2763,8 +2763,7 @@ function simpleChecksum(str) {
   return (h >>> 0).toString(16);
 }
 
-function exportData() {
-  createAutoBackup();
+function backupPayloadText() {
   const payload = {
     app: 'Chores',
     version: APP_VERSION,
@@ -2772,53 +2771,137 @@ function exportData() {
     data: state,
   };
   payload.checksum = simpleChecksum(JSON.stringify(payload.data));
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `chores-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Sauvegarde exportée ✔');
+  return JSON.stringify(payload);
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Safari iOS < 13 ne sait pas télécharger un fichier généré (erreur « WebKitBlobResource 1 »).
+ * Ordre : menu Partager (iOS récent) → téléchargement classique (ordinateur) → texte à copier.
+ */
+function exportData() {
+  createAutoBackup();
+  const text = backupPayloadText();
+  const name = `chores-backup-${todayKey()}.json`;
+  let file = null;
+  try { file = new File([text], name, { type: 'application/json' }); } catch (e) { file = null; }
+
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: 'Sauvegarde Chores' })
+      .then(() => showToast('Sauvegarde partagée ✔'))
+      .catch(err => { if (!err || err.name !== 'AbortError') showExportText(text); });
+    return;
+  }
+  if (!isIOS() && 'download' in document.createElement('a')) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Laisser le temps au navigateur de lire le fichier avant de le libérer
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    showToast('Sauvegarde exportée ✔');
+    return;
+  }
+  showExportText(text);
+}
+
+/** Affiche la sauvegarde en texte : à copier dans Notes, un mail ou un message. */
+function showExportText(text) {
+  const area = document.getElementById('backup-text');
+  area.value = text;
+  area.readOnly = true;
+  document.getElementById('backup-modal-title').textContent = '💾 Ta sauvegarde';
+  document.getElementById('backup-modal-hint').textContent =
+    'Touche « Copier », puis colle le texte dans Notes, un mail ou un message pour le garder. Pour restaurer : Paramètres → « Restaurer depuis un texte collé ».';
+  document.getElementById('btn-backup-copy').style.display = '';
+  document.getElementById('btn-backup-restore').style.display = 'none';
+  closeModal('modal-settings');
+  openModal('modal-backup');
+}
+
+function copyBackupText() {
+  const area = document.getElementById('backup-text');
+  const done = () => showToast('Sauvegarde copiée 📋 Colle-la dans Notes');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(area.value).then(done).catch(() => legacyCopy(area) ? done() : selectHint());
+  } else if (legacyCopy(area)) {
+    done();
+  } else {
+    selectHint();
+  }
+}
+
+function legacyCopy(area) {
+  area.readOnly = false;
+  area.focus();
+  area.setSelectionRange(0, area.value.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  area.readOnly = true;
+  return ok;
+}
+
+function selectHint() {
+  showToast('Sélectionne tout le texte puis « Copier »');
+}
+
+function openPasteRestore() {
+  const area = document.getElementById('backup-text');
+  area.value = '';
+  area.readOnly = false;
+  document.getElementById('backup-modal-title').textContent = '📋 Restaurer depuis un texte';
+  document.getElementById('backup-modal-hint').textContent = 'Colle ici le texte de ta sauvegarde (il commence par {"app":"Chores"…), puis touche « Restaurer ».';
+  document.getElementById('btn-backup-copy').style.display = 'none';
+  document.getElementById('btn-backup-restore').style.display = '';
+  closeModal('modal-settings');
+  openModal('modal-backup');
+}
+
+/** Restaure à partir du contenu d'une sauvegarde (fichier ou texte collé). */
+function restoreFromText(text) {
+  let parsed;
+  try { parsed = JSON.parse(String(text).trim()); } catch (e) { showToast('Texte de sauvegarde illisible'); return; }
+  let data = null;
+  if (parsed && parsed.data && parsed.data.profiles) {
+    if (parsed.checksum) {
+      const expected = simpleChecksum(JSON.stringify(parsed.data));
+      if (expected !== parsed.checksum) {
+        if (!confirm('⚠️ Checksum incorrect. Restaurer quand même ?')) return;
+      }
+    }
+    data = parsed.data;
+  } else if (parsed && parsed.profiles) {
+    data = parsed;
+  }
+  if (!data || !Array.isArray(data.profiles)) {
+    showToast('Sauvegarde invalide');
+    return;
+  }
+  if (!confirm('Restaurer cette sauvegarde ?\nLes données actuelles seront remplacées.')) return;
+  createAutoBackup();
+  state = Object.assign({}, state, data);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  showToast('Sauvegarde restaurée ✔');
+  setTimeout(() => location.reload(), 600);
 }
 
 function importData() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.json,application/json';
+  input.accept = '.json,application/json,text/plain';
   input.onchange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const parsed = JSON.parse(ev.target.result);
-        let data = null;
-        if (parsed.data && parsed.data.profiles) {
-          if (parsed.checksum) {
-            const expected = simpleChecksum(JSON.stringify(parsed.data));
-            if (expected !== parsed.checksum) {
-              if (!confirm('⚠️ Checksum incorrect. Restaurer quand même ?')) return;
-            }
-          }
-          data = parsed.data;
-        } else if (parsed.profiles) {
-          data = parsed;
-        }
-        if (!data || !Array.isArray(data.profiles)) {
-          showToast('Fichier invalide');
-          return;
-        }
-        if (!confirm('Restaurer cette sauvegarde ?\nLes données actuelles seront remplacées.')) return;
-        createAutoBackup();
-        state = { ...state, ...data };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        showToast('Sauvegarde restaurée ✔');
-        setTimeout(() => location.reload(), 600);
-      } catch (e) {
-        showToast('Erreur de lecture du fichier');
-      }
-    };
+    reader.onload = (ev) => restoreFromText(ev.target.result);
+    reader.onerror = () => showToast('Erreur de lecture du fichier');
     reader.readAsText(file);
   };
   input.click();
@@ -3012,6 +3095,9 @@ function init() {
 
   document.getElementById('btn-export').addEventListener('click', exportData);
   document.getElementById('btn-import').addEventListener('click', importData);
+  document.getElementById('btn-import-text').addEventListener('click', openPasteRestore);
+  document.getElementById('btn-backup-copy').addEventListener('click', copyBackupText);
+  document.getElementById('btn-backup-restore').addEventListener('click', () => restoreFromText(document.getElementById('backup-text').value));
   document.getElementById('btn-reset').addEventListener('click', resetApp);
 
   const rateInput = document.getElementById('rate-input');

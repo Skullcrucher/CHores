@@ -384,6 +384,7 @@
           <div id="auto-backups-list" class="backups-list"></div>
           <button class="btn-primary btn-block" id="btn-export" style="margin-top:0.6rem">📥 Exporter une copie</button>
           <button class="btn-secondary btn-block" id="btn-import">📤 Restaurer depuis un fichier</button>
+          <button class="btn-secondary btn-block" id="btn-import-text">📋 Restaurer depuis un texte collé</button>
           <button class="btn-danger btn-block" id="btn-reset">🗑️ Réinitialiser l’application</button>
         </div>
         <div class="modal-actions">
@@ -399,6 +400,19 @@
         <p class="hint">Chaque membre de la famille garde son propre thème.</p>
         <div class="modal-actions">
           <button class="btn-primary" onclick="closeModal('modal-theme')">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-backup" class="modal">
+      <div class="modal-content">
+        <h2 id="backup-modal-title">💾 Ta sauvegarde</h2>
+        <p class="hint" id="backup-modal-hint"></p>
+        <textarea id="backup-text" class="backup-text" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal('modal-backup')">Fermer</button>
+          <button class="btn-primary" id="btn-backup-copy">📋 Copier</button>
+          <button class="btn-primary" id="btn-backup-restore" style="display:none">Restaurer</button>
         </div>
       </div>
     </div>

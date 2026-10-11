@@ -756,3 +756,9 @@ html, body {
 .stats-table tr:last-child td { border-bottom: none; }
 .no-flex-gap .bc-stack > * + * { margin-bottom: 2px; }
 .no-flex-gap .sc-head > * + *, .no-flex-gap .legend > * + * { margin-left: 0.5rem; }
+
+.backup-text {
+  width: 100%; height: 180px; margin-top: 0.6rem; padding: 0.6rem; font-family: ui-monospace, Menlo, monospace;
+  font-size: 0.7rem; border: 2px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text); resize: vertical; user-select: text; -webkit-user-select: text;
+}
