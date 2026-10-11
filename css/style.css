@@ -701,3 +701,58 @@ html, body {
 .da-text .chip { margin-top: 0.4rem; border-color: #DB2777; color: #DB2777; background: white; }
 .da-text strong { text-transform: none; }
 .no-flex-gap .day-alert > * + * { margin-left: 0.7rem; }
+
+/* Taux de conversion */
+.rate-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.rate-row input {
+  width: 110px; padding: 0.6rem 0.8rem; border: 2px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 1.1rem; background: var(--bg); color: var(--text); text-align: center;
+}
+.rate-row input:focus { outline: none; border-color: var(--primary); }
+.no-flex-gap .rate-row > * + * { margin-left: 0.5rem; }
+
+/* Statistiques */
+.stats-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 0.6rem; margin-bottom: 0.7rem; }
+.stats-card { background: var(--card); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 0.6rem 0.8rem; border-top: 4px solid var(--border); }
+.sc-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+.sc-head img { width: 30px; height: 30px; border-radius: 50%; }
+.sc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.sc-grid div { background: var(--bg); border-radius: 8px; padding: 0.35rem; text-align: center; }
+.sc-grid strong { display: block; font-size: 1rem; color: var(--text); }
+.sc-grid span { font-size: 0.65rem; color: var(--text-muted); }
+.stats-block { background: var(--card); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 0.6rem 0.8rem; margin-bottom: 0.7rem; }
+.stats-block .side-title { margin-bottom: 0.5rem; flex-wrap: wrap; }
+.stats-two { display: grid; gap: 0.7rem; }
+.stats-two .stats-block { margin-bottom: 0; }
+@media (min-width: 760px) { .stats-two { grid-template-columns: 1fr 1fr; margin-bottom: 0.7rem; } }
+.legend { display: flex; gap: 0.7rem; flex-wrap: wrap; font-weight: 500; font-size: 0.78rem; color: var(--text-muted); }
+.lg-item { display: inline-flex; align-items: center; }
+.lg-item i { width: 10px; height: 10px; border-radius: 2px; margin-right: 0.3rem; display: inline-block; }
+.bar-chart {
+  display: grid; gap: 2px; height: 170px; align-items: end;
+  border-bottom: 1px solid var(--border); padding-bottom: 0;
+}
+.bc-col {
+  height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch;
+  background: none; border: none; padding: 0 1px; cursor: pointer; min-width: 0; font: inherit; color: var(--text-muted);
+  border-radius: 4px; touch-action: manipulation;
+}
+.bc-col:hover, .bc-col.active { background: var(--bg); }
+.bc-total { font-size: 0.68rem; font-weight: 700; color: var(--text); text-align: center; min-height: 1em; }
+.bc-stack { display: flex; flex-direction: column-reverse; width: 100%; max-width: 34px; margin: 0 auto; gap: 2px; min-height: 0; }
+.bc-stack i { display: block; min-height: 3px; }
+.bc-stack i:last-child { border-radius: 4px 4px 0 0; }
+.bc-label { font-size: 0.6rem; text-align: center; white-space: nowrap; overflow: hidden; margin-top: 2px; }
+.bc-detail { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.4rem; min-height: 1.2em; }
+.hbar { display: grid; grid-template-columns: minmax(90px, 40%) 1fr auto; gap: 0.5rem; align-items: center; font-size: 0.8rem; margin: 0.3rem 0; }
+.hb-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hb-label small { color: var(--text-muted); }
+.hb-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.hb-track i { display: block; height: 100%; background: var(--primary); border-radius: 0 4px 4px 0; }
+.hb-val { font-weight: 700; min-width: 2.5rem; text-align: right; }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.stats-table th { text-align: left; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.3rem; }
+.stats-table td { padding: 0.35rem 0.3rem; border-bottom: 1px solid var(--border); }
+.stats-table tr:last-child td { border-bottom: none; }
+.no-flex-gap .bc-stack > * + * { margin-bottom: 2px; }
+.no-flex-gap .sc-head > * + *, .no-flex-gap .legend > * + * { margin-left: 0.5rem; }

@@ -95,7 +95,7 @@
           <div class="stat"><span class="stat-value" id="stat-level">1</span><span class="stat-label">Niveau</span></div>
           <div class="stat"><span class="stat-value" id="stat-invest">0</span><span class="stat-label">Investis</span></div>
         </div>
-        <button class="icon-btn" id="btn-theme" title="Thème">🎨</button>
+        <button class="icon-btn" id="btn-theme" title="Mon thème">🎨</button>
       </header>
 
       <nav class="bottom-nav">
@@ -147,6 +147,16 @@
             <button class="btn-primary btn-large" id="btn-convert">Convertir maintenant</button>
             <p class="hint" id="convert-hint"></p>
           </div>
+          <div class="convert-box">
+            <h3>Convertir des euros en points</h3>
+            <p>1 point = <span id="rate-display-back">0,10</span> € (même taux)</p>
+            <div class="convert-row">
+              <input type="text" inputmode="decimal" id="convert-euros" placeholder="Euros" autocomplete="off">
+              <span class="convert-result" id="euros-result">= 0 pts</span>
+            </div>
+            <button class="btn-secondary btn-large" id="btn-euros">Convertir en points</button>
+            <p class="hint">Les euros reconvertis libèrent d’autant ton plafond du mois.</p>
+          </div>
           <div class="history-box">
             <h3>Historique du mois</h3>
             <div id="wallet-history"></div>
@@ -193,13 +203,15 @@
             <span class="title-badge">🔑 Admin</span>
           </div>
         </div>
-        <button class="icon-btn" id="btn-theme-admin" title="Thème">🎨</button>
+        <button class="icon-btn" id="btn-settings-admin" title="Paramètres">⚙️</button>
+        <button class="icon-btn" id="btn-theme-admin" title="Mon thème">🎨</button>
       </header>
 
       <nav class="bottom-nav">
         <button class="nav-btn active" data-tab="admin-tasks">📋 En cours</button>
         <button class="nav-btn" data-tab="admin-catalog">📚 Catalogue</button>
         <button class="nav-btn" data-tab="admin-planning">📅 Planning</button>
+        <button class="nav-btn" data-tab="admin-stats">📊 Stats</button>
         <button class="nav-btn" data-tab="admin-assign">➕ Attribuer</button>
         <button class="nav-btn" data-tab="admin-family">👨‍👩‍👧‍👦 Famille</button>
       </nav>
@@ -221,6 +233,10 @@
 
         <div id="tab-admin-planning" class="tab">
           <div id="admin-planning"></div>
+        </div>
+
+        <div id="tab-admin-stats" class="tab">
+          <div id="admin-stats"></div>
         </div>
 
         <div id="tab-admin-assign" class="tab">
@@ -334,12 +350,20 @@
       <div class="modal-content">
         <h2>Paramètres</h2>
         <div class="form-group">
-          <label>Thème</label>
+          <label>Thème par défaut</label>
           <div class="themes-grid" id="themes-grid"></div>
         </div>
         <div class="form-group">
-          <label>Taux de conversion</label>
-          <p class="hint">1 point = <input type="number" id="rate-input" value="0.10" min="0.01" max="1" step="0.01" style="width:70px"> €</p>
+          <label>💶 Taux de conversion (points ↔ euros)</label>
+          <div class="rate-row">
+            <span>1 point =</span>
+            <input type="text" id="rate-input" inputmode="decimal" autocomplete="off" placeholder="0,10">
+            <span>€</span>
+            <button type="button" class="btn-primary btn-sm" id="btn-save-rate">Enregistrer</button>
+          </div>
+          <div class="chips" id="rate-presets" style="margin-top:0.5rem"></div>
+          <p class="hint" id="rate-preview"></p>
+          <p class="hint">La virgule est acceptée. Le même taux sert dans les deux sens (points → euros et euros → points).</p>
         </div>
         <div class="form-group">
           <label>Limite de tâches par jour (enfants)</label>
@@ -364,6 +388,17 @@
         </div>
         <div class="modal-actions">
           <button class="btn-primary" onclick="closeModal('modal-settings')">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-theme" class="modal">
+      <div class="modal-content">
+        <h2 id="profile-theme-title">🎨 Mon thème</h2>
+        <div class="themes-grid" id="profile-themes-grid"></div>
+        <p class="hint">Chaque membre de la famille garde son propre thème.</p>
+        <div class="modal-actions">
+          <button class="btn-primary" onclick="closeModal('modal-theme')">Fermer</button>
         </div>
       </div>
     </div>
