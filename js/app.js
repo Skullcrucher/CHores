@@ -763,13 +763,25 @@ function migrateRecurring() {
   if (!state.routines) state.routines = [];
   const old = state.tasks.filter(t =>
     !t.routineId && !t.done && !t.archived && (t.recurrence === 'daily' || t.recurrence === 'weekly'));
+  const today = localDayKey(new Date());
   old.forEach(t => {
-    state.routines.push({
+    const r = {
       id: newId('rt_'), templateId: t.templateId, name: t.name, category: t.category,
       points: t.points, difficulty: t.difficulty, assigneeId: t.assigneeId,
       days: t.recurrence === 'daily' ? RECURRENCE_PRESETS.daily.slice() : [new Date(t.createdAt || Date.now()).getDay()],
       createdAt: new Date().toISOString(),
-    });
+    };
+    state.routines.push(r);
+    // Déjà faite aujourd'hui avec l'ancienne version : on la rattache à la routine
+    // pour qu'elle ne réapparaisse pas (pas de points en double).
+    const doneToday = state.tasks.filter(x =>
+      x.done && !x.routineId && x.assigneeId === t.assigneeId && x.completedAt
+      && localDayKey(x.completedAt) === today && (x.templateId ? x.templateId === t.templateId : x.name === t.name));
+    if (doneToday.length && r.days.includes(new Date().getDay())) {
+      const last = doneToday[doneToday.length - 1];
+      last.routineId = r.id;
+      last.dueDate = today;
+    }
   });
   if (old.length) state.tasks = state.tasks.filter(t => old.indexOf(t) === -1);
 }
