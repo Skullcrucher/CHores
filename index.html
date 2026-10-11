@@ -38,7 +38,7 @@
           <input type="password" id="password-input" placeholder="Mot de passe" autocomplete="off">
         </div>
         <div class="modal-actions">
-          <button class="btn-secondary" onclick="closeModal('modal-password')">Annuler</button>
+          <button class="btn-secondary" onclick="pendingPasswordAction = null; closeModal('modal-password')">Annuler</button>
           <button class="btn-primary" id="btn-check-password">Valider</button>
         </div>
       </div>
@@ -109,6 +109,7 @@
         <div id="tab-tasks" class="tab active">
          <div class="tasks-layout">
           <div class="tasks-col">
+          <div class="date-bar" id="date-bar"></div>
           <div class="week-strip" id="child-week"></div>
           <div class="section-header">
             <h2>Mes tâches</h2>

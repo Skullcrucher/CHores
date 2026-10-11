@@ -667,3 +667,16 @@ html, body {
 .pg-item.future { color: var(--text-muted); }
 .pg-extra { font-size: 0.65rem; color: var(--primary); font-weight: 600; }
 .no-flex-gap .week-day > * + * { margin-top: 0; }
+
+/* Barre de date (saisie d'un jour passé) */
+.date-bar {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  background: var(--card); border-radius: var(--radius-sm); padding: 0.35rem 0.5rem;
+  box-shadow: var(--shadow); margin-bottom: 0.5rem;
+}
+.date-bar.past { background: #FEF3C7; border: 2px solid var(--warning); color: #78350F; }
+.db-label { flex: 1; text-align: center; font-size: 0.9rem; min-width: 0; }
+.db-label strong { text-transform: capitalize; }
+.week-day.pickable { cursor: pointer; }
+.week-day.selected { outline: 3px solid var(--warning); }
+.no-flex-gap .date-bar > * + * { margin-left: 0.4rem; }
