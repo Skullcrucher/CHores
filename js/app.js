@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.5.2';
+const APP_VERSION = '3.6.1';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -1262,6 +1262,7 @@ function showMainChild() {
   document.getElementById('profile-select').classList.remove('active');
   document.getElementById('main-admin').classList.remove('active');
   document.getElementById('main').classList.add('active');
+  applyProfileTheme();
   taskDay = null;
   stripWeekOffset = 0;
 
@@ -1283,6 +1284,7 @@ function showMainAdmin() {
   document.getElementById('profile-select').classList.remove('active');
   document.getElementById('main').classList.remove('active');
   document.getElementById('main-admin').classList.add('active');
+  applyProfileTheme();
 
   document.getElementById('admin-avatar').src = avatarSVG(p.avatar, 42);
   document.getElementById('admin-name').textContent = p.name;
@@ -1314,6 +1316,7 @@ function backToProfiles() {
   document.getElementById('main-admin').classList.remove('active');
   document.getElementById('profile-select').classList.add('active');
   state.currentProfileId = null;
+  setBodyTheme(state.settings.theme || 'default');
   renderProfiles();
 }
 
@@ -1600,7 +1603,7 @@ function renderWallet() {
   document.getElementById('wallet-amount').textContent = formatMoney(p.wallet || 0);
   document.getElementById('wallet-ceiling').textContent = p.ceiling || 20;
   document.getElementById('wallet-converted').textContent = (p.convertedThisMonth || 0).toFixed(2);
-  document.getElementById('rate-display').textContent = state.settings.rate.toFixed(2).replace('.', ',');
+  document.getElementById('rate-display').textContent = formatRate(state.settings.rate);
 
   const remaining = (p.ceiling || 20) - (p.convertedThisMonth || 0);
   const hint = document.getElementById('convert-hint');
@@ -1616,7 +1619,14 @@ function renderWallet() {
   const history = (p.walletHistory || []).slice(0, 15);
   hist.innerHTML = history.length === 0
     ? '<p class="hint">Aucune conversion ce mois-ci.</p>'
-    : history.map(h => `
+    : history.map(h => h.type === 'to_points' ? `
+      <div class="history-item">
+        <div>
+          <div>${formatMoney(h.amount)} → ${h.points} points</div>
+          <div class="date">${formatDate(h.date)}</div>
+        </div>
+        <div class="amount neg">−${formatMoney(h.amount)}</div>
+      </div>` : `
       <div class="history-item">
         <div>
           <div>${h.points} points → ${formatMoney(h.amount)}</div>
@@ -1624,6 +1634,42 @@ function renderWallet() {
         </div>
         <div class="amount">+${formatMoney(h.amount)}</div>
       </div>`).join('');
+  document.getElementById('rate-display-back').textContent = formatRate(state.settings.rate);
+  updateEurosPreview();
+}
+
+/** Euros → points au même taux (on ne débite que le montant exact correspondant à des points entiers). */
+function eurosToPoints(euros) {
+  const pts = Math.floor((euros + 1e-9) / state.settings.rate);
+  return { pts, cost: Math.round(pts * state.settings.rate * 100) / 100 };
+}
+
+function updateEurosPreview() {
+  const el = document.getElementById('euros-result');
+  if (!el) return;
+  const eur = parseDecimal(document.getElementById('convert-euros').value) || 0;
+  const { pts, cost } = eurosToPoints(eur);
+  el.textContent = `= ${pts} pts` + (pts && Math.abs(cost - eur) > 0.001 ? ` (${formatMoney(cost)})` : '');
+}
+
+function convertEuros() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  const eur = parseDecimal(document.getElementById('convert-euros').value) || 0;
+  const { pts, cost } = eurosToPoints(eur);
+  if (pts <= 0) { showToast('Entre un montant valide'); return; }
+  if (cost > (p.wallet || 0) + 0.001) { showToast('Pas assez d’argent dans le porte-monnaie !'); return; }
+  p.wallet = Math.round(((p.wallet || 0) - cost) * 100) / 100;
+  p.points = (p.points || 0) + pts;
+  // Rendre de l'argent libère d'autant le plafond du mois (aller-retour neutre)
+  p.convertedThisMonth = Math.max(0, (p.convertedThisMonth || 0) - cost);
+  p.walletHistory = p.walletHistory || [];
+  p.walletHistory.unshift({ date: new Date().toISOString(), points: pts, amount: cost, type: 'to_points' });
+  saveState();
+  document.getElementById('convert-euros').value = '';
+  updateStatsBar();
+  renderWallet();
+  showToast(`+${pts} points 🪙`);
 }
 
 function updateConvertPreview() {
@@ -2283,6 +2329,182 @@ function answerRaise(childId, accept) {
   renderAdminFamily();
 }
 
+// ---------- STATISTIQUES (parents) ----------
+// Une couleur fixe par enfant (ordre de création), validée daltonisme ; jamais réattribuée.
+const SERIES_LIGHT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+const SERIES_DARK = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+const STATS_PERIODS = [
+  { id: '7', label: '7 jours' },
+  { id: '30', label: '30 jours' },
+  { id: 'month', label: 'Ce mois' },
+  { id: '90', label: '3 mois' },
+];
+let statsPeriod = '7';
+
+function seriesColor(index) {
+  const dark = document.body.classList.contains('theme-dark');
+  const pal = dark ? SERIES_DARK : SERIES_LIGHT;
+  return pal[index % pal.length];
+}
+
+function statsRange() {
+  const today = todayKey();
+  if (statsPeriod === 'month') return { start: today.slice(0, 8) + '01', end: today };
+  return { start: shiftDay(today, -(parseInt(statsPeriod) - 1)), end: today };
+}
+
+function daysBetween(start, end) {
+  const out = [];
+  for (let k = start; k <= end; k = shiftDay(k, 1)) out.push(k);
+  return out;
+}
+
+function renderAdminStats() {
+  const el = document.getElementById('admin-stats');
+  if (!el) return;
+  const children = state.profiles.filter(p => p.type === 'child');
+  if (!children.length) { el.innerHTML = '<div class="empty-state"><p>Aucun enfant.</p></div>'; return; }
+  const { start, end } = statsRange();
+  const days = daysBetween(start, end);
+  const inRange = t => t.done && t.completedAt && localDayKey(t.completedAt) >= start && localDayKey(t.completedAt) <= end;
+  const done = state.tasks.filter(t => inRange(t) && children.some(c => c.id === t.assigneeId));
+
+  // Résumé par enfant
+  const summary = children.map((c, i) => {
+    const mine = done.filter(t => t.assigneeId === c.id);
+    const activeDays = new Set(mine.map(t => localDayKey(t.completedAt))).size;
+    let expected = 0, routineDone = 0;
+    days.forEach(k => {
+      const rep = dayReport(c.id, k);
+      expected += rep.routines.filter(x => x.status === 'done' || x.status === 'missed').length;
+      routineDone += rep.routines.filter(x => x.status === 'done').length;
+    });
+    const felt = mine.filter(t => t.feltDifficulty);
+    return {
+      child: c, color: seriesColor(i), tasks: mine.length,
+      points: mine.reduce((s, t) => s + (t.earnedPoints != null ? t.earnedPoints : t.points), 0),
+      activeDays, routineDone, expected,
+      extras: mine.filter(t => !t.routineId).length,
+      felt: felt.length ? felt.reduce((s, t) => s + t.feltDifficulty, 0) / felt.length : null,
+    };
+  });
+
+  // Tâches par jour, empilées par enfant
+  const perDay = days.map(k => ({
+    key: k,
+    counts: children.map(c => done.filter(t => t.assigneeId === c.id && localDayKey(t.completedAt) === k).length),
+  }));
+  const maxDay = Math.max(1, ...perDay.map(d => d.counts.reduce((a, b) => a + b, 0)));
+  const showDayLabels = days.length <= 31;
+  const chart = `
+    <div class="bar-chart" style="grid-template-columns: repeat(${days.length}, minmax(0, 1fr))">
+      ${perDay.map(d => {
+        const total = d.counts.reduce((a, b) => a + b, 0);
+        const detail = `${dayHeader(d.key)} : ` + (total
+          ? children.map((c, i) => d.counts[i] ? `${c.name} ${d.counts[i]}` : '').filter(Boolean).join(' · ')
+          : 'aucune tâche');
+        return `
+          <button type="button" class="bc-col" data-detail="${escapeHtml(detail)}" title="${escapeHtml(detail)}">
+            <span class="bc-total">${total && days.length <= 14 ? total : ''}</span>
+            <span class="bc-stack" style="height:${(total / maxDay) * 100}%">
+              ${d.counts.map((n, i) => n ? `<i style="flex:${n};background:${seriesColor(i)}"></i>` : '').join('')}
+            </span>
+            ${showDayLabels ? `<span class="bc-label">${days.length <= 14 ? dayHeader(d.key) : new Date(d.key + 'T12:00:00').getDate()}</span>` : ''}
+          </button>`;
+      }).join('')}
+    </div>`;
+
+  // Catégories
+  const cats = Object.keys(CATEGORY_LABELS).map(cat => ({ cat, n: done.filter(t => t.category === cat).length })).filter(x => x.n);
+  const maxCat = Math.max(1, ...cats.map(x => x.n));
+
+  // Top tâches
+  const byName = {};
+  done.forEach(t => {
+    const r = byName[t.name] || (byName[t.name] = { name: t.name, total: 0, per: {}, felt: [] });
+    r.total++;
+    r.per[t.assigneeId] = (r.per[t.assigneeId] || 0) + 1;
+    if (t.feltDifficulty) r.felt.push(t.feltDifficulty);
+  });
+  const top = Object.values(byName).sort((a, b) => b.total - a.total).slice(0, 10);
+
+  // Routines : taux de réalisation
+  const routineRows = (state.routines || []).filter(r => children.some(c => c.id === r.assigneeId)).map(r => {
+    let exp = 0, ok = 0;
+    days.forEach(k => {
+      if (!routineActiveOn(r, k) || k > todayKey()) return;
+      const isDone = done.some(t => t.routineId === r.id && localDayKey(t.completedAt) === k);
+      if (k === todayKey() && !isDone) return; // la journée n'est pas finie
+      exp++;
+      if (isDone) ok++;
+    });
+    return { r, exp, ok };
+  }).filter(x => x.exp);
+
+  const legend = summary.map(s =>
+    `<span class="lg-item"><i style="background:${s.color}"></i>${escapeHtml(s.child.name)}</span>`).join('');
+  const feltLabel = v => v == null ? '—' : v < 1.5 ? '😊 Facile' : v < 2.5 ? '😐 Normale' : v < 3.5 ? '😓 Difficile' : '🔥 Très dure';
+
+  el.innerHTML = `
+    <div class="section-header">
+      <h2>📊 Statistiques</h2>
+      <div class="chips">${STATS_PERIODS.map(p => `<button class="chip ${statsPeriod === p.id ? 'strong' : ''}" data-stats-period="${p.id}">${p.label}</button>`).join('')}</div>
+    </div>
+
+    <div class="stats-cards">
+      ${summary.map(s => `
+        <div class="stats-card" style="border-top-color:${s.color}">
+          <div class="sc-head"><img src="${avatarSVG(s.child.avatar, 30)}" alt=""><strong>${escapeHtml(s.child.name)}</strong></div>
+          <div class="sc-grid">
+            <div><strong>${s.tasks}</strong><span>tâches</span></div>
+            <div><strong>${fmt(s.points)}</strong><span>points</span></div>
+            <div><strong>${s.activeDays}/${days.length}</strong><span>jours actifs</span></div>
+            <div><strong>${s.expected ? Math.round(s.routineDone / s.expected * 100) + ' %' : '—'}</strong><span>routines faites</span></div>
+            <div><strong>${s.extras}</strong><span>au choix</span></div>
+            <div><strong>${feltLabel(s.felt)}</strong><span>ressenti moyen</span></div>
+          </div>
+        </div>`).join('')}
+    </div>
+
+    <div class="stats-block">
+      <div class="side-title"><span>Tâches faites par jour</span><span class="legend">${legend}</span></div>
+      ${chart}
+      <div class="bc-detail" id="bc-detail">Touche une colonne pour voir le détail.</div>
+    </div>
+
+    <div class="stats-two">
+      <div class="stats-block">
+        <div class="side-title"><span>Par catégorie</span></div>
+        ${cats.length ? cats.map(x => `
+          <div class="hbar">
+            <span class="hb-label">${CATEGORY_LABELS[x.cat]}</span>
+            <span class="hb-track"><i style="width:${x.n / maxCat * 100}%"></i></span>
+            <span class="hb-val">${x.n}</span>
+          </div>`).join('') : '<p class="hint">Aucune tâche sur la période.</p>'}
+      </div>
+      <div class="stats-block">
+        <div class="side-title"><span>Routines : taux de réalisation</span></div>
+        ${routineRows.length ? routineRows.map(x => {
+          const c = state.profiles.find(p => p.id === x.r.assigneeId);
+          return `
+          <div class="hbar">
+            <span class="hb-label">${escapeHtml(x.r.name)} <small>· ${c ? escapeHtml(c.name) : ''}</small></span>
+            <span class="hb-track"><i style="width:${x.ok / x.exp * 100}%"></i></span>
+            <span class="hb-val">${x.ok}/${x.exp}</span>
+          </div>`;
+        }).join('') : '<p class="hint">Aucune routine prévue sur la période.</p>'}
+      </div>
+    </div>
+
+    <div class="stats-block">
+      <div class="side-title"><span>Tâches les plus faites</span></div>
+      ${top.length ? `<table class="stats-table">
+        <thead><tr><th>Tâche</th><th>Total</th>${children.map(c => `<th>${escapeHtml(c.name)}</th>`).join('')}<th>Ressenti</th></tr></thead>
+        <tbody>${top.map(r => `<tr><td>${escapeHtml(r.name)}</td><td><strong>${r.total}</strong></td>${children.map(c => `<td>${r.per[c.id] || '·'}</td>`).join('')}<td>${feltLabel(r.felt.length ? r.felt.reduce((a, b) => a + b, 0) / r.felt.length : null)}</td></tr>`).join('')}</tbody>
+      </table>` : '<p class="hint">Aucune tâche sur la période.</p>'}
+    </div>`;
+}
+
 // ---------- TEMPLATE MODAL ----------
 function openTemplateModal(editId = null) {
   editingTemplateId = editId;
@@ -2416,37 +2638,114 @@ async function saveProfile() {
   showToast(`${name} a rejoint la famille ! 🎉`);
 }
 
-// ---------- THEMES / SETTINGS ----------
-function applyTheme(theme) {
-  document.body.className = theme === 'default' ? '' : `theme-${theme}`;
-  state.settings.theme = theme;
-  saveState();
+// ---------- TAUX DE CONVERSION ----------
+const RATE_MIN = 0.001;
+const RATE_MAX = 10;
+const RATE_PRESETS = [0.01, 0.02, 0.05, 0.10, 0.20, 0.50];
+
+/** Accepte « 0,05 » comme « 0.05 » (clavier français de l'iPad). */
+function parseDecimal(str) {
+  const n = parseFloat(String(str || '').trim().replace(',', '.'));
+  return isNaN(n) ? null : n;
 }
 
-function renderThemes() {
-  const grid = document.getElementById('themes-grid');
-  const themes = [
+function formatRate(rate) {
+  return (rate || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+}
+
+function renderRatePreview(rate) {
+  const el = document.getElementById('rate-preview');
+  if (!el) return;
+  if (rate == null || rate < RATE_MIN || rate > RATE_MAX) {
+    el.textContent = `⚠️ Entre ${formatRate(RATE_MIN)} € et ${RATE_MAX} € par point`;
+    el.style.color = 'var(--danger)';
+    return;
+  }
+  el.style.color = '';
+  el.textContent = `10 points = ${formatMoney(10 * rate)} · 100 points = ${formatMoney(100 * rate)}`;
+}
+
+function renderRateSetting() {
+  const rate = state.settings.rate;
+  document.getElementById('rate-input').value = formatRate(rate);
+  document.getElementById('rate-presets').innerHTML = RATE_PRESETS.map(r =>
+    `<button type="button" class="chip ${Math.abs(r - rate) < 1e-9 ? 'strong' : ''}" data-rate="${r}">${formatRate(r)} €</button>`).join('');
+  renderRatePreview(rate);
+}
+
+function saveRate(rate) {
+  if (rate == null || rate < RATE_MIN || rate > RATE_MAX) {
+    showToast(`Taux invalide : entre ${formatRate(RATE_MIN)} et ${RATE_MAX} €`);
+    renderRatePreview(rate);
+    return;
+  }
+  rate = Math.round(rate * 1000) / 1000;
+  state.settings.rate = rate;
+  saveState();
+  renderRateSetting();
+  if (getCurrentProfile() && document.getElementById('main').classList.contains('active')) {
+    renderWallet();
+    updateConvertPreview();
+  }
+  showToast(`Taux enregistré : 1 point = ${formatRate(rate)} € ✔`);
+}
+
+// ---------- THEMES / SETTINGS ----------
+const THEMES = [
     { id: 'default', label: 'Indigo' },
     { id: 'ocean', label: 'Océan' },
     { id: 'forest', label: 'Forêt' },
     { id: 'sunset', label: 'Coucher' },
     { id: 'berry', label: 'Baie' },
     { id: 'dark', label: 'Sombre' },
-  ];
-  grid.innerHTML = themes.map(t => `
-    <button class="theme-btn ${state.settings.theme === t.id ? 'selected' : ''}" data-theme="${t.id}">${t.label}</button>
-  `).join('');
+];
+
+/** Applique un thème à l'écran (sans l'enregistrer). */
+function setBodyTheme(theme) {
+  document.body.className = !theme || theme === 'default' ? '' : `theme-${theme}`;
+}
+
+function applyTheme(theme) {
+  state.settings.theme = theme;
+  setBodyTheme(theme);
+  saveState();
+}
+
+/** Thème du profil actif, sinon le thème par défaut de la famille. */
+function applyProfileTheme() {
+  const p = getCurrentProfile();
+  setBodyTheme((p && p.theme) || state.settings.theme || 'default');
+}
+
+function themeButtons(selected) {
+  return THEMES.map(t =>
+    `<button class="theme-btn ${selected === t.id ? 'selected' : ''}" data-theme="${t.id}">${t.label}</button>`).join('');
+}
+
+function openProfileTheme() {
+  const p = getCurrentProfile();
+  if (!p) return;
+  document.getElementById('profile-theme-title').textContent = `🎨 Thème de ${p.name}`;
+  const grid = document.getElementById('profile-themes-grid');
+  grid.innerHTML = themeButtons(p.theme || state.settings.theme || 'default');
+  openModal('modal-theme');
+}
+
+function renderThemes() {
+  const grid = document.getElementById('themes-grid');
+  grid.innerHTML = themeButtons(state.settings.theme || 'default');
   grid.querySelectorAll('.theme-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       applyTheme(btn.dataset.theme);
+      if (getCurrentProfile()) applyProfileTheme();
       renderThemes();
-      showToast('Thème appliqué 🎨');
+      showToast('Thème par défaut appliqué 🎨');
     });
   });
 }
 
 function openSettings() {
-  document.getElementById('rate-input').value = state.settings.rate;
+  renderRateSetting();
   const dailyInput = document.getElementById('daily-limit-input');
   if (dailyInput) dailyInput.value = state.settings.dailyTaskLimit || 3;
   document.getElementById('raise-mode-input').value = state.settings.raiseMode || 'progressive';
@@ -2464,8 +2763,7 @@ function simpleChecksum(str) {
   return (h >>> 0).toString(16);
 }
 
-function exportData() {
-  createAutoBackup();
+function backupPayloadText() {
   const payload = {
     app: 'Chores',
     version: APP_VERSION,
@@ -2473,53 +2771,137 @@ function exportData() {
     data: state,
   };
   payload.checksum = simpleChecksum(JSON.stringify(payload.data));
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `chores-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Sauvegarde exportée ✔');
+  return JSON.stringify(payload);
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Safari iOS < 13 ne sait pas télécharger un fichier généré (erreur « WebKitBlobResource 1 »).
+ * Ordre : menu Partager (iOS récent) → téléchargement classique (ordinateur) → texte à copier.
+ */
+function exportData() {
+  createAutoBackup();
+  const text = backupPayloadText();
+  const name = `chores-backup-${todayKey()}.json`;
+  let file = null;
+  try { file = new File([text], name, { type: 'application/json' }); } catch (e) { file = null; }
+
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: 'Sauvegarde Chores' })
+      .then(() => showToast('Sauvegarde partagée ✔'))
+      .catch(err => { if (!err || err.name !== 'AbortError') showExportText(text); });
+    return;
+  }
+  if (!isIOS() && 'download' in document.createElement('a')) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Laisser le temps au navigateur de lire le fichier avant de le libérer
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    showToast('Sauvegarde exportée ✔');
+    return;
+  }
+  showExportText(text);
+}
+
+/** Affiche la sauvegarde en texte : à copier dans Notes, un mail ou un message. */
+function showExportText(text) {
+  const area = document.getElementById('backup-text');
+  area.value = text;
+  area.readOnly = true;
+  document.getElementById('backup-modal-title').textContent = '💾 Ta sauvegarde';
+  document.getElementById('backup-modal-hint').textContent =
+    'Touche « Copier », puis colle le texte dans Notes, un mail ou un message pour le garder. Pour restaurer : Paramètres → « Restaurer depuis un texte collé ».';
+  document.getElementById('btn-backup-copy').style.display = '';
+  document.getElementById('btn-backup-restore').style.display = 'none';
+  closeModal('modal-settings');
+  openModal('modal-backup');
+}
+
+function copyBackupText() {
+  const area = document.getElementById('backup-text');
+  const done = () => showToast('Sauvegarde copiée 📋 Colle-la dans Notes');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(area.value).then(done).catch(() => legacyCopy(area) ? done() : selectHint());
+  } else if (legacyCopy(area)) {
+    done();
+  } else {
+    selectHint();
+  }
+}
+
+function legacyCopy(area) {
+  area.readOnly = false;
+  area.focus();
+  area.setSelectionRange(0, area.value.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  area.readOnly = true;
+  return ok;
+}
+
+function selectHint() {
+  showToast('Sélectionne tout le texte puis « Copier »');
+}
+
+function openPasteRestore() {
+  const area = document.getElementById('backup-text');
+  area.value = '';
+  area.readOnly = false;
+  document.getElementById('backup-modal-title').textContent = '📋 Restaurer depuis un texte';
+  document.getElementById('backup-modal-hint').textContent = 'Colle ici le texte de ta sauvegarde (il commence par {"app":"Chores"…), puis touche « Restaurer ».';
+  document.getElementById('btn-backup-copy').style.display = 'none';
+  document.getElementById('btn-backup-restore').style.display = '';
+  closeModal('modal-settings');
+  openModal('modal-backup');
+}
+
+/** Restaure à partir du contenu d'une sauvegarde (fichier ou texte collé). */
+function restoreFromText(text) {
+  let parsed;
+  try { parsed = JSON.parse(String(text).trim()); } catch (e) { showToast('Texte de sauvegarde illisible'); return; }
+  let data = null;
+  if (parsed && parsed.data && parsed.data.profiles) {
+    if (parsed.checksum) {
+      const expected = simpleChecksum(JSON.stringify(parsed.data));
+      if (expected !== parsed.checksum) {
+        if (!confirm('⚠️ Checksum incorrect. Restaurer quand même ?')) return;
+      }
+    }
+    data = parsed.data;
+  } else if (parsed && parsed.profiles) {
+    data = parsed;
+  }
+  if (!data || !Array.isArray(data.profiles)) {
+    showToast('Sauvegarde invalide');
+    return;
+  }
+  if (!confirm('Restaurer cette sauvegarde ?\nLes données actuelles seront remplacées.')) return;
+  createAutoBackup();
+  state = Object.assign({}, state, data);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  showToast('Sauvegarde restaurée ✔');
+  setTimeout(() => location.reload(), 600);
 }
 
 function importData() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.json,application/json';
+  input.accept = '.json,application/json,text/plain';
   input.onchange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const parsed = JSON.parse(ev.target.result);
-        let data = null;
-        if (parsed.data && parsed.data.profiles) {
-          if (parsed.checksum) {
-            const expected = simpleChecksum(JSON.stringify(parsed.data));
-            if (expected !== parsed.checksum) {
-              if (!confirm('⚠️ Checksum incorrect. Restaurer quand même ?')) return;
-            }
-          }
-          data = parsed.data;
-        } else if (parsed.profiles) {
-          data = parsed;
-        }
-        if (!data || !Array.isArray(data.profiles)) {
-          showToast('Fichier invalide');
-          return;
-        }
-        if (!confirm('Restaurer cette sauvegarde ?\nLes données actuelles seront remplacées.')) return;
-        createAutoBackup();
-        state = { ...state, ...data };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        showToast('Sauvegarde restaurée ✔');
-        setTimeout(() => location.reload(), 600);
-      } catch (e) {
-        showToast('Erreur de lecture du fichier');
-      }
-    };
+    reader.onload = (ev) => restoreFromText(ev.target.result);
+    reader.onerror = () => showToast('Erreur de lecture du fichier');
     reader.readAsText(file);
   };
   input.click();
@@ -2555,6 +2937,7 @@ function switchTab(tabId, navRoot) {
   if (tabId === 'admin-assign') renderAssignForm();
   if (tabId === 'admin-family') renderAdminFamily();
   if (tabId === 'admin-planning') renderAdminPlanning();
+  if (tabId === 'admin-stats') renderAdminStats();
 }
 
 // ---------- INIT ----------
@@ -2595,7 +2978,7 @@ function init() {
   startupStep(migrateProfiles);
   startupStep(checkMonthlyReset);
   startupStep(() => { migrateRecurring(); materializeRoutines(); saveState(); });
-  startupStep(() => applyTheme(state.settings.theme || 'default'));
+  startupStep(() => setBodyTheme(state.settings.theme || 'default'));
 
   setTimeout(() => {
     if (document.getElementById('startup-error')) return;
@@ -2614,8 +2997,32 @@ function init() {
   document.getElementById('btn-back-profiles').addEventListener('click', backToProfiles);
   document.getElementById('btn-back-profiles-admin').addEventListener('click', backToProfiles);
   document.getElementById('btn-settings').addEventListener('click', openSettings);
-  document.getElementById('btn-theme').addEventListener('click', openSettings);
-  document.getElementById('btn-theme-admin').addEventListener('click', openSettings);
+  document.getElementById('btn-theme').addEventListener('click', openProfileTheme);
+  document.getElementById('btn-theme-admin').addEventListener('click', openProfileTheme);
+  document.getElementById('btn-settings-admin').addEventListener('click', openSettings);
+  document.getElementById('profile-themes-grid').addEventListener('click', e => {
+    const btn = e.target.closest('[data-theme]');
+    const p = getCurrentProfile();
+    if (!btn || !p) return;
+    p.theme = btn.dataset.theme;
+    saveState();
+    applyProfileTheme();
+    openProfileTheme();
+    if (p.type === 'parent') renderAdminStats();
+    showToast('Thème appliqué 🎨');
+  });
+  document.getElementById('btn-euros').addEventListener('click', convertEuros);
+  document.getElementById('convert-euros').addEventListener('input', updateEurosPreview);
+  document.getElementById('admin-stats').addEventListener('click', e => {
+    const per = e.target.closest('[data-stats-period]');
+    if (per) { statsPeriod = per.dataset.statsPeriod; renderAdminStats(); }
+    const col = e.target.closest('.bc-col');
+    if (col) {
+      document.getElementById('bc-detail').textContent = col.dataset.detail;
+      document.querySelectorAll('.bc-col.active').forEach(x => x.classList.remove('active'));
+      col.classList.add('active');
+    }
+  });
 
   document.getElementById('btn-convert').addEventListener('click', convertPoints);
   document.getElementById('convert-points').addEventListener('input', updateConvertPreview);
@@ -2688,12 +3095,19 @@ function init() {
 
   document.getElementById('btn-export').addEventListener('click', exportData);
   document.getElementById('btn-import').addEventListener('click', importData);
+  document.getElementById('btn-import-text').addEventListener('click', openPasteRestore);
+  document.getElementById('btn-backup-copy').addEventListener('click', copyBackupText);
+  document.getElementById('btn-backup-restore').addEventListener('click', () => restoreFromText(document.getElementById('backup-text').value));
   document.getElementById('btn-reset').addEventListener('click', resetApp);
 
-  document.getElementById('rate-input').addEventListener('change', e => {
-    state.settings.rate = parseFloat(e.target.value) || 0.10;
-    saveState();
+  const rateInput = document.getElementById('rate-input');
+  rateInput.addEventListener('input', () => renderRatePreview(parseDecimal(rateInput.value)));
+  rateInput.addEventListener('change', () => saveRate(parseDecimal(rateInput.value)));
+  document.getElementById('rate-presets').addEventListener('click', e => {
+    const btn = e.target.closest('[data-rate]');
+    if (btn) saveRate(parseFloat(btn.dataset.rate));
   });
+  document.getElementById('btn-save-rate').addEventListener('click', () => saveRate(parseDecimal(rateInput.value)));
 
   // Type selector
   document.querySelectorAll('.type-btn').forEach(btn => {
