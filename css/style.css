@@ -630,7 +630,12 @@ html, body {
 .no-flex-gap .avatar-option { height: auto; }
 
 /* Calendrier */
-.week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.3rem; margin-bottom: 0.7rem; }
+.week-strip { display: grid; grid-template-columns: 28px repeat(7, minmax(0, 1fr)) 28px; gap: 0.3rem; margin-bottom: 0.5rem; }
+.week-nav {
+  border: none; background: var(--card); color: var(--primary); border-radius: 8px;
+  box-shadow: var(--shadow); font-size: 0.8rem; cursor: pointer; padding: 0;
+}
+.week-nav:disabled { opacity: 0.3; cursor: default; }
 .week-day {
   background: var(--card); border-radius: 8px; padding: 0.3rem 0.2rem; text-align: center;
   box-shadow: var(--shadow); border-bottom: 3px solid var(--border); display: flex; flex-direction: column;
@@ -680,3 +685,15 @@ html, body {
 .week-day.pickable { cursor: pointer; }
 .week-day.selected { outline: 3px solid var(--warning); }
 .no-flex-gap .date-bar > * + * { margin-left: 0.4rem; }
+
+.day-alert {
+  display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.9rem;
+  background: #FCE7F3; border: 2px dashed #F472B6; border-radius: 16px; padding: 0.7rem 0.9rem; color: #831843;
+}
+.da-mascot { font-size: 2.4rem; line-height: 1; animation: wiggle 1.4s ease-in-out infinite; }
+@keyframes wiggle { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg) scale(1.08); } }
+.da-text { font-size: 0.9rem; line-height: 1.4; }
+.da-text strong:first-child { display: block; font-size: 1rem; }
+.da-text .chip { margin-top: 0.4rem; border-color: #DB2777; color: #DB2777; background: white; }
+.da-text strong { text-transform: none; }
+.no-flex-gap .day-alert > * + * { margin-left: 0.7rem; }
