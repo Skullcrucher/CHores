@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.3.2';
+const APP_VERSION = '3.4.0';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -715,11 +715,248 @@ function todayKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** Tâches « au choix » validées aujourd'hui (les routines des parents ne comptent pas dans la limite). */
 function tasksDoneToday(profileId) {
   const key = todayKey();
   return state.tasks.filter(t =>
-    t.assigneeId === profileId && t.done && t.completedAt && t.completedAt.slice(0, 10) === key
+    t.assigneeId === profileId && t.done && !t.routineId && t.completedAt && localDayKey(t.completedAt) === key
   ).length;
+}
+
+// ---------- ROUTINES & CALENDRIER ----------
+// Une routine = une tâche planifiée par un parent certains jours de la semaine.
+// Chaque jour, une tâche du jour est créée ; si elle n'est pas faite, elle est
+// marquée « manquée » le lendemain et une nouvelle apparaît. Les jours utilisent
+// Date#getDay() : 0 = dimanche … 6 = samedi.
+const WEEKDAY_SHORT = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const RECURRENCE_PRESETS = {
+  daily: [0, 1, 2, 3, 4, 5, 6],
+  weekdays: [1, 2, 3, 4, 5],
+  weekend: [0, 6],
+};
+
+let planningWeekOffset = 0;
+let assignCustomDays = [];
+
+function newId(prefix) {
+  return prefix + Date.now() + Math.random().toString(36).slice(2, 6);
+}
+
+function routineDaysLabel(days) {
+  const set = [...days].sort().join(',');
+  if (set === RECURRENCE_PRESETS.daily.join(',')) return 'Tous les jours';
+  if (set === RECURRENCE_PRESETS.weekdays.join(',')) return 'Lun–Ven';
+  if (set === RECURRENCE_PRESETS.weekend.join(',')) return 'Week-end';
+  return WEEK_ORDER.filter(d => days.includes(d)).map(d => WEEKDAY_SHORT[d]).join(' ');
+}
+
+function routineActiveOn(r, dateKey) {
+  const dow = new Date(dateKey + 'T12:00:00').getDay();
+  return r.days.includes(dow)
+    && localDayKey(r.createdAt) <= dateKey
+    && (!r.endedAt || localDayKey(r.endedAt) > dateKey);
+}
+
+/** Convertit les anciennes tâches « quotidien / hebdo » en routines. */
+function migrateRecurring() {
+  if (!state.routines) state.routines = [];
+  const old = state.tasks.filter(t =>
+    !t.routineId && !t.done && !t.archived && (t.recurrence === 'daily' || t.recurrence === 'weekly'));
+  old.forEach(t => {
+    state.routines.push({
+      id: newId('rt_'), templateId: t.templateId, name: t.name, category: t.category,
+      points: t.points, difficulty: t.difficulty, assigneeId: t.assigneeId,
+      days: t.recurrence === 'daily' ? RECURRENCE_PRESETS.daily.slice() : [new Date(t.createdAt || Date.now()).getDay()],
+      createdAt: new Date().toISOString(),
+    });
+  });
+  if (old.length) state.tasks = state.tasks.filter(t => old.indexOf(t) === -1);
+}
+
+/** Crée les tâches du jour et clôture celles des jours passés. */
+function materializeRoutines() {
+  if (!state.routines) state.routines = [];
+  const today = localDayKey(new Date());
+  state.tasks.forEach(t => {
+    if (t.routineId && !t.done && !t.archived && t.dueDate < today) {
+      t.archived = true;
+      t.missed = true;
+    }
+  });
+  state.routines.forEach(r => {
+    if (!routineActiveOn(r, today)) return;
+    if (!state.profiles.some(p => p.id === r.assigneeId)) return;
+    if (state.tasks.some(t => t.routineId === r.id && t.dueDate === today)) return;
+    state.tasks.push({
+      id: newId('t_'), templateId: r.templateId, routineId: r.id, dueDate: today,
+      name: r.name, category: r.category, points: r.points, difficulty: r.difficulty,
+      assigneeId: r.assigneeId, recurrence: 'routine', done: false, archived: false,
+      feltDifficulty: null, createdAt: new Date().toISOString(), completedAt: null,
+    });
+  });
+  state.lastRoutineDay = today;
+}
+
+/** Lundi → dimanche de la semaine courante (+ décalage en semaines). */
+function weekDateKeys(offset = 0) {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + offset * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const x = new Date(d);
+    x.setDate(d.getDate() + i);
+    return localDayKey(x);
+  });
+}
+
+/** Bilan d'une journée pour un enfant : routines prévues / faites, tâches au choix. */
+function dayReport(profileId, dateKey) {
+  const today = localDayKey(new Date());
+  const doneThatDay = state.tasks.filter(t =>
+    t.assigneeId === profileId && t.done && t.completedAt && localDayKey(t.completedAt) === dateKey);
+  const routines = (state.routines || [])
+    .filter(r => r.assigneeId === profileId && routineActiveOn(r, dateKey))
+    .map(r => {
+      const done = doneThatDay.some(t => t.routineId === r.id);
+      const status = done ? 'done' : dateKey < today ? 'missed' : dateKey === today ? 'todo' : 'future';
+      return { routine: r, status };
+    });
+  const extras = doneThatDay.filter(t => !t.routineId).length;
+  return { routines, extras, isToday: dateKey === today, isPast: dateKey < today };
+}
+
+function dayClass(rep) {
+  if (!rep.routines.length) return rep.extras ? 'full' : rep.isPast ? 'empty' : '';
+  const done = rep.routines.filter(x => x.status === 'done').length;
+  if (done === rep.routines.length) return 'full';
+  if (!rep.isPast && !rep.isToday) return '';
+  if (rep.isToday) return done ? 'partial' : '';
+  return done ? 'partial' : 'missed';
+}
+
+function dayHeader(dateKey) {
+  const d = new Date(dateKey + 'T12:00:00');
+  return `${WEEKDAY_SHORT[d.getDay()]} ${d.getDate()}`;
+}
+
+function renderChildWeek(p) {
+  const el = document.getElementById('child-week');
+  if (!el) return;
+  el.innerHTML = weekDateKeys().map(k => {
+    const rep = dayReport(p.id, k);
+    const done = rep.routines.filter(x => x.status === 'done').length;
+    return `
+      <div class="week-day ${dayClass(rep)} ${rep.isToday ? 'today' : ''}">
+        <span class="wd-name">${dayHeader(k)}</span>
+        <span class="wd-count">${rep.routines.length ? `${done}/${rep.routines.length}` : '–'}</span>
+        <span class="wd-extra">${rep.extras ? `+${rep.extras} au choix` : '&nbsp;'}</span>
+      </div>`;
+  }).join('');
+}
+
+function renderAdminPlanning() {
+  const el = document.getElementById('admin-planning');
+  if (!el) return;
+  const keys = weekDateKeys(planningWeekOffset);
+  const children = state.profiles.filter(p => p.type === 'child');
+  const first = new Date(keys[0] + 'T12:00:00');
+  const last = new Date(keys[6] + 'T12:00:00');
+  const fmtD = d => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+
+  if (!children.length) {
+    el.innerHTML = '<div class="empty-state"><p>Aucun enfant.</p></div>';
+    return;
+  }
+
+  const grid = `
+    <div class="planning-grid" style="grid-template-columns: 110px repeat(7, minmax(0, 1fr))">
+      <div class="pg-head"></div>
+      ${keys.map(k => `<div class="pg-head ${k === localDayKey(new Date()) ? 'today' : ''}">${dayHeader(k)}</div>`).join('')}
+      ${children.map(c => `
+        <div class="pg-child"><img src="${avatarSVG(c.avatar, 28)}" alt=""> ${escapeHtml(c.name)}</div>
+        ${keys.map(k => {
+          const rep = dayReport(c.id, k);
+          return `<div class="pg-cell ${dayClass(rep)} ${rep.isToday ? 'today' : ''}">
+            ${rep.routines.map(x => `<div class="pg-item ${x.status}">${{ done: '✔', missed: '✖', todo: '•', future: '·' }[x.status]} ${escapeHtml(x.routine.name)}</div>`).join('')}
+            ${rep.extras ? `<div class="pg-extra">+${rep.extras} au choix</div>` : ''}
+          </div>`;
+        }).join('')}
+      `).join('')}
+    </div>`;
+
+  const routines = (state.routines || []).filter(r => !r.endedAt);
+  const list = routines.length
+    ? routines.map(r => {
+      const child = state.profiles.find(p => p.id === r.assigneeId);
+      return `
+        <div class="task-card">
+          <div class="task-info">
+            <div class="task-name">${escapeHtml(r.name)}</div>
+            <div class="task-meta">
+              <span class="task-points">${r.points} pts</span>
+              <span>👤 ${child ? escapeHtml(child.name) : '?'}</span>
+              <span>🔁 ${routineDaysLabel(r.days)}</span>
+            </div>
+          </div>
+          <div class="task-actions"><button class="routine-delete" data-id="${r.id}" title="Arrêter la routine">🗑️</button></div>
+        </div>`;
+    }).join('')
+    : '<p class="hint">Aucune routine. Crée-en depuis l’onglet Attribuer (récurrence).</p>';
+
+  el.innerHTML = `
+    <div class="section-header">
+      <h2>📅 Semaine du ${fmtD(first)} au ${fmtD(last)}</h2>
+      <div class="chips">
+        <button class="chip" data-week="-1">◀</button>
+        <button class="chip ${planningWeekOffset === 0 ? 'strong' : ''}" data-week="0">Cette semaine</button>
+        <button class="chip" data-week="1">▶</button>
+      </div>
+    </div>
+    <div class="planning-scroll">${grid}</div>
+    <p class="hint">✔ faite · ✖ manquée · • à faire aujourd’hui · « au choix » = tâches prises dans le catalogue</p>
+    <div class="section-header" style="margin-top:1rem"><h2>🔁 Routines</h2></div>
+    <div class="tasks-list">${list}</div>`;
+}
+
+function stopRoutine(id) {
+  const r = (state.routines || []).find(x => x.id === id);
+  if (!r || !confirm(`Arrêter la routine « ${r.name} » ?\nL’historique est conservé.`)) return;
+  r.endedAt = new Date().toISOString();
+  const today = localDayKey(new Date());
+  state.tasks = state.tasks.filter(t => !(t.routineId === id && t.dueDate === today && !t.done));
+  saveState();
+  renderAdminPlanning();
+  renderAdminTasks();
+  showToast('Routine arrêtée');
+}
+
+function selectedAssignDays() {
+  const v = document.getElementById('assign-recurrence').value;
+  if (v === 'custom') return assignCustomDays.slice();
+  return RECURRENCE_PRESETS[v] ? RECURRENCE_PRESETS[v].slice() : null;
+}
+
+function renderAssignDays() {
+  const wrap = document.getElementById('assign-days');
+  if (!wrap) return;
+  const custom = document.getElementById('assign-recurrence').value === 'custom';
+  wrap.style.display = custom ? 'flex' : 'none';
+  wrap.innerHTML = WEEK_ORDER.map(d =>
+    `<button type="button" class="chip ${assignCustomDays.includes(d) ? 'strong' : ''}" data-day="${d}">${WEEKDAY_SHORT[d]}</button>`).join('');
+}
+
+/** Si l'app reste ouverte (iPad en cuisine), on bascule au jour suivant automatiquement. */
+function checkDayChange() {
+  if (localDayKey(new Date()) === state.lastRoutineDay) return;
+  checkMonthlyReset();
+  materializeRoutines();
+  saveState();
+  if (document.getElementById('main').classList.contains('active')) showMainChild();
+  if (document.getElementById('main-admin').classList.contains('active')) {
+    renderAdminTasks();
+    renderAdminPlanning();
+  }
 }
 
 function migrateProfiles() {
@@ -877,6 +1114,7 @@ function showMainAdmin() {
   renderAdminCatalog();
   renderAssignForm();
   renderAdminFamily();
+  renderAdminPlanning();
 
   const pending = state.profiles.filter(c => c.type === 'child' && c.company && pendingRaise(c));
   if (pending.length) {
@@ -911,32 +1149,47 @@ function renderChildTasks() {
   const doneToday = tasksDoneToday(p.id);
   const limitLabel = document.getElementById('daily-limit-label');
   if (limitLabel) {
-    limitLabel.textContent = `${doneToday} / ${limit} aujourd'hui`;
+    limitLabel.textContent = `Au choix : ${doneToday} / ${limit} aujourd'hui`;
     limitLabel.style.color = doneToday >= limit ? 'var(--danger)' : 'var(--text-muted)';
   }
 
-  const myTasks = state.tasks.filter(t => t.assigneeId === p.id && !t.archived && !t.done);
+  renderChildWeek(p);
+  const today = localDayKey(new Date());
+  const myTasks = state.tasks.filter(t => t.assigneeId === p.id && !t.archived && !t.done)
+    .sort((a, b) => (b.routineId ? 1 : 0) - (a.routineId ? 1 : 0));
+  const doneRoutines = state.tasks.filter(t => t.assigneeId === p.id && t.routineId && t.done && t.dueDate === today);
   const list = document.getElementById('tasks-list');
+  const routineLabel = t => {
+    const r = (state.routines || []).find(x => x.id === t.routineId);
+    return r ? `<span>🔁 ${routineDaysLabel(r.days)}</span>` : '';
+  };
 
-  if (myTasks.length === 0) {
+  if (myTasks.length === 0 && doneRoutines.length === 0) {
     list.innerHTML = `<div class="empty-state"><div class="emoji">📋</div><p>Aucune tâche en cours.<br>Choisis-en une dans le catalogue !</p></div>`;
   } else {
     list.innerHTML = myTasks.map(t => `
-      <div class="task-card">
+      <div class="task-card ${t.routineId ? 'routine' : ''}">
         <button class="task-check" data-id="${t.id}" title="Marquer comme faite"></button>
         <div class="task-info">
           <div class="task-name">${t.name}</div>
           <div class="task-meta">
             <span class="task-points">${t.points} pts</span>
             <span class="task-cat">${CATEGORY_LABELS[t.category] || ''}</span>
-            ${t.recurrence !== 'once' ? `<span>🔁 ${t.recurrence === 'daily' ? 'Quotidien' : 'Hebdo'}</span>` : ''}
+            ${t.routineId ? routineLabel(t) + '<span>📅 aujourd’hui</span>' : ''}
           </div>
         </div>
-        <div class="task-actions">
+        ${t.routineId ? '' : `<div class="task-actions">
           <button class="task-cancel" data-id="${t.id}" title="Annuler">✖️</button>
-        </div>
+        </div>`}
       </div>
-    `).join('');
+    `).join('') + doneRoutines.map(t => `
+      <div class="task-card done routine">
+        <div class="task-check">✔</div>
+        <div class="task-info">
+          <div class="task-name">${t.name}</div>
+          <div class="task-meta"><span class="task-points">+${t.earnedPoints != null ? t.earnedPoints : t.points} pts</span>${routineLabel(t)}<span>✔ Faite aujourd’hui</span></div>
+        </div>
+      </div>`).join('');
   }
 
   list.querySelectorAll('.task-check').forEach(btn => {
@@ -1070,8 +1323,8 @@ function openDifficultyModal(taskId) {
   if (!task || task.done) return;
   const p = getCurrentProfile();
   const limit = state.settings.dailyTaskLimit || 3;
-  if (p && tasksDoneToday(p.id) >= limit) {
-    showToast(`Limite de ${limit} tâches / jour atteinte`);
+  if (p && !task.routineId && tasksDoneToday(p.id) >= limit) {
+    showToast(`Limite de ${limit} tâches au choix / jour atteinte`);
     return;
   }
   pendingCompleteTaskId = taskId;
@@ -1096,8 +1349,8 @@ function confirmComplete() {
   if (!profile || profile.type !== 'child') return;
 
   const limit = state.settings.dailyTaskLimit || 3;
-  if (tasksDoneToday(profile.id) >= limit) {
-    showToast(`Limite de ${limit} tâches / jour atteinte`);
+  if (!task.routineId && tasksDoneToday(profile.id) >= limit) {
+    showToast(`Limite de ${limit} tâches au choix / jour atteinte`);
     closeModal('modal-difficulty');
     return;
   }
@@ -1121,21 +1374,6 @@ function confirmComplete() {
   while (profile.xp >= xpForLevel((profile.level || 1) + 1)) {
     profile.level = (profile.level || 1) + 1;
     leveled = true;
-  }
-
-  if (task.recurrence === 'daily' || task.recurrence === 'weekly') {
-    task.archived = true;
-    state.tasks.push({
-      ...task,
-      id: 't_' + Date.now() + Math.random().toString(36).slice(2, 6),
-      done: false,
-      completedAt: null,
-      feltDifficulty: null,
-      bonusPoints: null,
-      earnedPoints: null,
-      archived: false,
-      createdAt: new Date().toISOString(),
-    });
   }
 
   saveState();
@@ -1616,7 +1854,8 @@ function renderProgress() {
 function renderAdminTasks() {
   const list = document.getElementById('admin-tasks-list');
   const active = state.tasks.filter(t => !t.archived && !t.done);
-  const done = state.tasks.filter(t => t.done && !t.archived).slice(0, 20);
+  const done = state.tasks.filter(t => t.done && !t.archived)
+    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt)).slice(0, 20);
 
   if (active.length === 0 && done.length === 0) {
     list.innerHTML = `<div class="empty-state"><div class="emoji">📋</div><p>Aucune tâche en cours.<br>Attribue-en depuis l’onglet Attribuer.</p></div>`;
@@ -1635,7 +1874,7 @@ function renderAdminTasks() {
             <div class="task-meta">
               <span class="task-points">${t.points} pts</span>
               <span>👤 ${child ? child.name : '?'}</span>
-              ${t.recurrence !== 'once' ? `<span>🔁</span>` : ''}
+              ${t.routineId ? `<span>🔁 routine du jour</span>` : ''}
             </div>
           </div>
           <div class="task-actions">
@@ -1742,12 +1981,26 @@ function renderAssignForm() {
 function doAssign() {
   const tplId = document.getElementById('assign-template').value;
   const childId = document.getElementById('assign-child').value;
-  const recurrence = document.getElementById('assign-recurrence').value;
+  const days = selectedAssignDays();
   const tpl = state.templates.find(t => t.id === tplId);
   const child = state.profiles.find(p => p.id === childId);
 
   if (!tpl || !child) {
     showToast('Choisis une tâche et un enfant');
+    return;
+  }
+
+  if (days) {
+    if (!days.length) { showToast('Choisis au moins un jour'); return; }
+    state.routines.push({
+      id: newId('rt_'), templateId: tpl.id, name: tpl.name, category: tpl.category,
+      points: tpl.points, difficulty: tpl.difficulty, assigneeId: child.id, days,
+      createdAt: new Date().toISOString(),
+    });
+    materializeRoutines();
+    saveState();
+    renderAdminTasks();
+    showToast(`Routine « ${tpl.name} » (${routineDaysLabel(days)}) pour ${child.name} ✔`);
     return;
   }
 
@@ -1759,7 +2012,7 @@ function doAssign() {
     points: tpl.points,
     difficulty: tpl.difficulty,
     assigneeId: child.id,
-    recurrence,
+    recurrence: 'once',
     done: false,
     archived: false,
     feltDifficulty: null,
@@ -2099,6 +2352,7 @@ function switchTab(tabId, navRoot) {
   if (tabId === 'admin-catalog') renderAdminCatalog();
   if (tabId === 'admin-assign') renderAssignForm();
   if (tabId === 'admin-family') renderAdminFamily();
+  if (tabId === 'admin-planning') renderAdminPlanning();
 }
 
 // ---------- INIT ----------
@@ -2138,6 +2392,7 @@ function init() {
   startupStep(loadState);
   startupStep(migrateProfiles);
   startupStep(checkMonthlyReset);
+  startupStep(() => { migrateRecurring(); materializeRoutines(); saveState(); });
   startupStep(() => applyTheme(state.settings.theme || 'default'));
 
   setTimeout(() => {
@@ -2196,6 +2451,28 @@ function init() {
   document.getElementById('btn-add-template').addEventListener('click', () => openTemplateModal());
   document.getElementById('btn-save-template').addEventListener('click', saveTemplate);
   document.getElementById('btn-do-assign').addEventListener('click', doAssign);
+  document.getElementById('assign-recurrence').addEventListener('change', renderAssignDays);
+  document.getElementById('assign-days').addEventListener('click', e => {
+    const btn = e.target.closest('[data-day]');
+    if (!btn) return;
+    const d = parseInt(btn.dataset.day);
+    assignCustomDays = assignCustomDays.includes(d) ? assignCustomDays.filter(x => x !== d) : assignCustomDays.concat(d);
+    renderAssignDays();
+  });
+  document.getElementById('admin-planning').addEventListener('click', e => {
+    const week = e.target.closest('[data-week]');
+    if (week) {
+      const v = parseInt(week.dataset.week);
+      planningWeekOffset = v === 0 ? 0 : planningWeekOffset + v;
+      renderAdminPlanning();
+    }
+    const del = e.target.closest('.routine-delete');
+    if (del) stopRoutine(del.dataset.id);
+  });
+  setInterval(() => startupStep(checkDayChange), 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) startupStep(checkDayChange);
+  });
 
   document.getElementById('btn-export').addEventListener('click', exportData);
   document.getElementById('btn-import').addEventListener('click', importData);

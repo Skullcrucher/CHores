@@ -628,3 +628,42 @@ html, body {
 .no-flex-gap .side-card > * + *, .no-flex-gap #company-side > * + *, .no-flex-gap .contract-row > * + *,
 .no-flex-gap .raise-request > * + *, .no-flex-gap .backups-list > * + *, .no-flex-gap .startup-error > * + * { margin-top: 0.4rem; }
 .no-flex-gap .avatar-option { height: auto; }
+
+/* Calendrier */
+.week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.3rem; margin-bottom: 0.7rem; }
+.week-day {
+  background: var(--card); border-radius: 8px; padding: 0.3rem 0.2rem; text-align: center;
+  box-shadow: var(--shadow); border-bottom: 3px solid var(--border); display: flex; flex-direction: column;
+}
+.week-day.today { outline: 2px solid var(--primary); }
+.week-day.full { border-bottom-color: var(--success); }
+.week-day.partial { border-bottom-color: var(--warning); }
+.week-day.missed { border-bottom-color: var(--danger); }
+.wd-name { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; }
+.wd-count { font-size: 0.95rem; font-weight: 800; }
+.week-day.full .wd-count { color: var(--success); }
+.week-day.missed .wd-count { color: var(--danger); }
+.wd-extra { font-size: 0.58rem; color: var(--primary); white-space: nowrap; overflow: hidden; }
+.task-card.routine { border-left-color: var(--warning); }
+.task-card.done .task-check { display: flex; align-items: center; justify-content: center; }
+
+.planning-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.planning-grid { display: grid; gap: 3px; min-width: 640px; }
+.pg-head { font-size: 0.75rem; font-weight: 700; text-align: center; padding: 0.3rem; color: var(--text-muted); }
+.pg-head.today { color: var(--primary); }
+.pg-child { display: flex; align-items: center; font-weight: 700; font-size: 0.85rem; }
+.pg-child img { width: 28px; height: 28px; border-radius: 50%; margin-right: 0.35rem; }
+.pg-cell {
+  background: var(--card); border-radius: 6px; padding: 0.3rem; min-height: 48px;
+  box-shadow: var(--shadow); border-top: 3px solid var(--border);
+}
+.pg-cell.today { outline: 2px solid var(--primary); }
+.pg-cell.full { border-top-color: var(--success); }
+.pg-cell.partial { border-top-color: var(--warning); }
+.pg-cell.missed { border-top-color: var(--danger); }
+.pg-item { font-size: 0.68rem; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pg-item.done { color: var(--success); }
+.pg-item.missed { color: var(--danger); }
+.pg-item.future { color: var(--text-muted); }
+.pg-extra { font-size: 0.65rem; color: var(--primary); font-weight: 600; }
+.no-flex-gap .week-day > * + * { margin-top: 0; }

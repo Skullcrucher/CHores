@@ -109,6 +109,7 @@
         <div id="tab-tasks" class="tab active">
          <div class="tasks-layout">
           <div class="tasks-col">
+          <div class="week-strip" id="child-week"></div>
           <div class="section-header">
             <h2>Mes tâches</h2>
             <span class="hint" id="daily-limit-label">0 / 3 aujourd'hui</span>
@@ -197,6 +198,7 @@
       <nav class="bottom-nav">
         <button class="nav-btn active" data-tab="admin-tasks">📋 En cours</button>
         <button class="nav-btn" data-tab="admin-catalog">📚 Catalogue</button>
+        <button class="nav-btn" data-tab="admin-planning">📅 Planning</button>
         <button class="nav-btn" data-tab="admin-assign">➕ Attribuer</button>
         <button class="nav-btn" data-tab="admin-family">👨‍👩‍👧‍👦 Famille</button>
       </nav>
@@ -216,6 +218,10 @@
           <div id="admin-catalog-list" class="tasks-list"></div>
         </div>
 
+        <div id="tab-admin-planning" class="tab">
+          <div id="admin-planning"></div>
+        </div>
+
         <div id="tab-admin-assign" class="tab">
           <div class="section-header"><h2>Attribuer une tâche</h2></div>
           <p class="hint" style="margin-bottom:0.8rem">Optionnel : les enfants choisissent en priorité leurs tâches eux-mêmes. L’attribution parent sert pour les tâches récurrentes ou obligatoires.</p>
@@ -233,8 +239,12 @@
               <select id="assign-recurrence">
                 <option value="once">Une seule fois</option>
                 <option value="daily">Tous les jours</option>
-                <option value="weekly">Chaque semaine</option>
+                <option value="weekdays">Du lundi au vendredi</option>
+                <option value="weekend">Le week-end</option>
+                <option value="custom">Jours choisis…</option>
               </select>
+              <div class="chips" id="assign-days" style="display:none;margin-top:0.5rem"></div>
+              <p class="hint">Une routine réapparaît chaque jour prévu, même si elle n’a pas été faite la veille (elle est alors notée « manquée »). Les routines ne comptent pas dans la limite de tâches au choix.</p>
             </div>
             <button class="btn-primary btn-large" id="btn-do-assign">Attribuer la tâche</button>
           </div>
