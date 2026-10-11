@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.5.1';
+const APP_VERSION = '3.5.2';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -870,11 +870,11 @@ function renderChildWeek(p) {
     const rep = dayReport(p.id, k);
     const done = rep.routines.filter(x => x.status === 'done').length;
     return `
-      <div class="week-day ${dayClass(rep)} ${rep.isToday ? 'today' : ''} ${k === taskDay ? 'selected' : ''} ${k <= todayKey() && k >= minBackfillDay() ? 'pickable' : ''}" data-pick-day="${k}">
+      <button type="button" class="week-day ${dayClass(rep)} ${rep.isToday ? 'today' : ''} ${k === taskDay ? 'selected' : ''} ${k <= todayKey() && k >= minBackfillDay() ? 'pickable' : ''}" data-pick-day="${k}" ${k <= todayKey() && k >= minBackfillDay() ? '' : 'disabled'}>
         <span class="wd-name">${dayHeader(k)}</span>
         <span class="wd-count">${rep.routines.length ? `${done}/${rep.routines.length}` : '–'}</span>
         <span class="wd-extra">${rep.extras ? `+${rep.extras} au choix` : '&nbsp;'}</span>
-      </div>`;
+      </button>`;
   }).join('')
     + `<button class="week-nav" data-strip-week="1" ${stripWeekOffset < 0 ? '' : 'disabled'} title="Semaine suivante">▶</button>`;
 }

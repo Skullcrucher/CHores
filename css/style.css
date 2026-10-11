@@ -637,6 +637,8 @@ html, body {
 }
 .week-nav:disabled { opacity: 0.3; cursor: default; }
 .week-day {
+  font: inherit; color: var(--text); border: none; width: 100%; min-width: 0; -webkit-appearance: none;
+  touch-action: manipulation;
   background: var(--card); border-radius: 8px; padding: 0.3rem 0.2rem; text-align: center;
   box-shadow: var(--shadow); border-bottom: 3px solid var(--border); display: flex; flex-direction: column;
 }
@@ -683,6 +685,8 @@ html, body {
 .db-label { flex: 1; text-align: center; font-size: 0.9rem; min-width: 0; }
 .db-label strong { text-transform: capitalize; }
 .week-day.pickable { cursor: pointer; }
+.week-day:disabled { opacity: 0.55; }
+.week-day.pickable:active { transform: scale(0.95); }
 .week-day.selected { outline: 3px solid var(--warning); }
 .no-flex-gap .date-bar > * + * { margin-left: 0.4rem; }
 
