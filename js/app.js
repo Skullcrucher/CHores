@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.5.2';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -134,6 +134,11 @@ let pendingPasswordProfileId = null;
 let editingTemplateId = null;
 let catalogSearch = '';
 let catalogCategory = 'all';
+let taskDay = null;              // null = aujourd'hui, sinon 'AAAA-MM-JJ' (saisie d'un jour passé)
+let pendingDraft = null;         // tâche à enregistrer pour un jour passé
+let pendingDraftKind = null;
+let stripWeekOffset = 0;         // semaine affichée dans le bandeau (0 = cette semaine)
+const BACKFILL_MAX_DAYS = 14;
 
 // ---------- PERSISTENCE ----------
 function loadState() {
@@ -717,7 +722,10 @@ function todayKey() {
 
 /** Tâches « au choix » validées aujourd'hui (les routines des parents ne comptent pas dans la limite). */
 function tasksDoneToday(profileId) {
-  const key = todayKey();
+  return tasksDoneOnDay(profileId, todayKey());
+}
+
+function tasksDoneOnDay(profileId, key) {
   return state.tasks.filter(t =>
     t.assigneeId === profileId && t.done && !t.routineId && t.completedAt && localDayKey(t.completedAt) === key
   ).length;
@@ -855,16 +863,20 @@ function dayHeader(dateKey) {
 function renderChildWeek(p) {
   const el = document.getElementById('child-week');
   if (!el) return;
-  el.innerHTML = weekDateKeys().map(k => {
+  const keys = weekDateKeys(stripWeekOffset);
+  const canPrev = shiftDay(keys[0], -1) >= minBackfillDay();
+  el.innerHTML = `<button class="week-nav" data-strip-week="-1" ${canPrev ? '' : 'disabled'} title="Semaine précédente">◀</button>`
+    + keys.map(k => {
     const rep = dayReport(p.id, k);
     const done = rep.routines.filter(x => x.status === 'done').length;
     return `
-      <div class="week-day ${dayClass(rep)} ${rep.isToday ? 'today' : ''}">
+      <button type="button" class="week-day ${dayClass(rep)} ${rep.isToday ? 'today' : ''} ${k === taskDay ? 'selected' : ''} ${k <= todayKey() && k >= minBackfillDay() ? 'pickable' : ''}" data-pick-day="${k}" ${k <= todayKey() && k >= minBackfillDay() ? '' : 'disabled'}>
         <span class="wd-name">${dayHeader(k)}</span>
         <span class="wd-count">${rep.routines.length ? `${done}/${rep.routines.length}` : '–'}</span>
         <span class="wd-extra">${rep.extras ? `+${rep.extras} au choix` : '&nbsp;'}</span>
-      </div>`;
-  }).join('');
+      </button>`;
+  }).join('')
+    + `<button class="week-nav" data-strip-week="1" ${stripWeekOffset < 0 ? '' : 'disabled'} title="Semaine suivante">▶</button>`;
 }
 
 function renderAdminPlanning() {
@@ -961,6 +973,8 @@ function renderAssignDays() {
 /** Si l'app reste ouverte (iPad en cuisine), on bascule au jour suivant automatiquement. */
 function checkDayChange() {
   if (localDayKey(new Date()) === state.lastRoutineDay) return;
+  taskDay = null;
+  stripWeekOffset = 0;
   checkMonthlyReset();
   materializeRoutines();
   saveState();
@@ -969,6 +983,155 @@ function checkDayChange() {
     renderAdminTasks();
     renderAdminPlanning();
   }
+}
+
+// ---------- SAISIE D'UN JOUR PASSÉ ----------
+function dayLabel(dateKey) {
+  return new Date(dateKey + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function shiftDay(dateKey, n) {
+  const d = new Date(dateKey + 'T12:00:00');
+  d.setDate(d.getDate() + n);
+  return localDayKey(d);
+}
+
+function minBackfillDay() {
+  return shiftDay(todayKey(), -BACKFILL_MAX_DAYS);
+}
+
+function setTaskDay(dateKey) {
+  const today = todayKey();
+  if (!dateKey || dateKey >= today || dateKey === taskDay) {
+    taskDay = null;
+    stripWeekOffset = 0;
+  } else if (dateKey < minBackfillDay()) {
+    showToast(`On peut revenir ${BACKFILL_MAX_DAYS} jours en arrière maximum`);
+    return;
+  } else {
+    taskDay = dateKey;
+  }
+  renderChildTasks();
+}
+
+/** Bandeau visible seulement quand un jour passé est sélectionné. */
+function renderDateBar() {
+  const el = document.getElementById('date-bar');
+  if (!el) return;
+  el.style.display = taskDay ? 'flex' : 'none';
+  el.innerHTML = taskDay ? `
+    <div class="db-label">✏️ Tu remplis <strong>${dayLabel(taskDay)}</strong></div>
+    <button class="chip strong" data-day-today>Revenir à aujourd’hui</button>` : '';
+}
+
+/** Liste du jour passé sélectionné : routines prévues (à cocher si oubliées) + tâches au choix faites. */
+function pastDayHtml(p, day) {
+  const rep = dayReport(p.id, day);
+  const doneExtras = state.tasks.filter(t =>
+    t.assigneeId === p.id && t.done && !t.routineId && t.completedAt && localDayKey(t.completedAt) === day);
+  const routines = rep.routines.map(x => {
+    const r = x.routine;
+    if (x.status === 'done') {
+      return `<div class="task-card done routine"><div class="task-check">✔</div>
+        <div class="task-info"><div class="task-name">${escapeHtml(r.name)}</div>
+        <div class="task-meta"><span class="task-points">${r.points} pts</span><span>🔁 ${routineDaysLabel(r.days)}</span><span>✔ Faite</span></div></div></div>`;
+    }
+    return `<div class="task-card routine">
+      <button class="task-check backfill-routine" data-id="${r.id}" title="Marquer comme faite ce jour-là"></button>
+      <div class="task-info"><div class="task-name">${escapeHtml(r.name)}</div>
+      <div class="task-meta"><span class="task-points">${r.points} pts</span><span>🔁 ${routineDaysLabel(r.days)}</span><span style="color:var(--danger)">✖ Non faite</span></div></div></div>`;
+  }).join('');
+  const extras = doneExtras.map(t => `
+    <div class="task-card done"><div class="task-check">✔</div>
+      <div class="task-info"><div class="task-name">${escapeHtml(t.name)}</div>
+      <div class="task-meta"><span class="task-points">+${t.earnedPoints != null ? t.earnedPoints : t.points} pts</span><span>Au choix</span></div></div></div>`).join('');
+  return (routines + extras)
+    || '<div class="empty-state"><div class="emoji">📅</div><p>Rien ce jour-là.<br>Ajoute les tâches faites depuis le catalogue.</p></div>';
+}
+
+/** Prépare l'enregistrement d'une tâche faite un jour passé, puis ouvre la fenêtre de validation. */
+function openBackfill(kind, id) {
+  const p = getCurrentProfile();
+  if (!p || !taskDay) return;
+  const day = taskDay;
+  const limit = state.settings.dailyTaskLimit || 3;
+  let draft;
+  if (kind === 'routine') {
+    const r = (state.routines || []).find(x => x.id === id);
+    if (!r) return;
+    const existing = state.tasks.find(t => t.routineId === r.id && t.dueDate === day);
+    if (existing && existing.done) return;
+    draft = existing || {
+      id: newId('t_'), templateId: r.templateId, routineId: r.id, dueDate: day,
+      name: r.name, category: r.category, points: r.points, difficulty: r.difficulty,
+      assigneeId: p.id, recurrence: 'routine', done: false, archived: false,
+      createdAt: new Date().toISOString(), completedAt: null,
+    };
+  } else {
+    if (tasksDoneOnDay(p.id, day) >= limit) { showToast(`Limite de ${limit} tâches au choix atteinte ce jour-là`); return; }
+    const tpl = state.templates.find(t => t.id === id);
+    if (!tpl) return;
+    draft = {
+      id: newId('t_'), templateId: tpl.id, name: tpl.name, category: tpl.category, points: tpl.points,
+      difficulty: tpl.difficulty, assigneeId: p.id, recurrence: 'once', done: false, archived: false,
+      selfClaimed: true, createdAt: new Date().toISOString(), completedAt: null,
+    };
+  }
+  draft.backfillDay = day;
+  pendingDraft = draft;
+  pendingDraftKind = { kind, id };
+  pendingCompleteTaskId = null;
+  showDayAlert(day);
+  selectedFelt = 2;
+  document.getElementById('diff-task-name').textContent = `${draft.name} — ${dayLabel(day)}`;
+  ensureInvestFields(p);
+  const bonus = Math.round(draft.points * taskBoost(p, draft.category) / 100);
+  document.getElementById('diff-points').textContent = bonus ? `${draft.points} + ${bonus} bonus entreprise` : draft.points;
+  document.querySelectorAll('.felt-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.felt) === 2));
+  openModal('modal-difficulty');
+}
+
+const DAY_ALERT_MASCOTS = ['🐻', '🐰', '🦊', '🐼', '🐣', '🐨'];
+
+/** Petit message mignon dans la fenêtre de validation quand la date n'est pas aujourd'hui. */
+function showDayAlert(day) {
+  const el = document.getElementById('diff-day-alert');
+  if (!el) return;
+  if (!day) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const mascot = DAY_ALERT_MASCOTS[Math.floor(Math.random() * DAY_ALERT_MASCOTS.length)];
+  el.style.display = 'flex';
+  el.innerHTML = `
+    <span class="da-mascot">${mascot}</span>
+    <div class="da-text">
+      <strong>Coucou, attention !</strong>
+      Cette tâche sera comptée pour <strong>${dayLabel(day)}</strong>, pas pour aujourd’hui.
+      <button class="chip" id="btn-day-alert-today">Oups, c’est pour aujourd’hui !</button>
+    </div>`;
+  document.getElementById('btn-day-alert-today').addEventListener('click', switchDraftToToday);
+}
+
+/** L'enfant s'est trompé de jour : on repasse à aujourd'hui et on valide normalement. */
+function switchDraftToToday() {
+  const draft = pendingDraftKind;
+  closeModal('modal-difficulty');
+  pendingDraft = null;
+  pendingDraftKind = null;
+  setTaskDay(null);
+  if (!draft) return;
+  const p = getCurrentProfile();
+  if (!p) return;
+  let task;
+  if (draft.kind === 'routine') {
+    task = state.tasks.find(t => t.routineId === draft.id && t.dueDate === todayKey() && !t.done);
+    if (!task) { showToast('Cette routine n’est pas prévue aujourd’hui (ou déjà faite) ✔'); return; }
+  } else {
+    task = state.tasks.find(t => t.assigneeId === p.id && t.templateId === draft.id && !t.done && !t.archived);
+    if (!task) {
+      claimTask(draft.id);
+      task = state.tasks.find(t => t.assigneeId === p.id && t.templateId === draft.id && !t.done && !t.archived);
+    }
+  }
+  if (task) openDifficultyModal(task.id);
 }
 
 function migrateProfiles() {
@@ -1099,6 +1262,8 @@ function showMainChild() {
   document.getElementById('profile-select').classList.remove('active');
   document.getElementById('main-admin').classList.remove('active');
   document.getElementById('main').classList.add('active');
+  taskDay = null;
+  stripWeekOffset = 0;
 
   document.getElementById('current-avatar').src = avatarSVG(p.avatar, 42);
   document.getElementById('current-name').textContent = p.name;
@@ -1165,7 +1330,20 @@ function renderChildTasks() {
     limitLabel.style.color = doneToday >= limit ? 'var(--danger)' : 'var(--text-muted)';
   }
 
+  renderDateBar();
   renderChildWeek(p);
+  if (taskDay) {
+    const dayLimit = state.settings.dailyTaskLimit || 3;
+    if (limitLabel) limitLabel.textContent = `Au choix : ${tasksDoneOnDay(p.id, taskDay)} / ${dayLimit} ce jour-là`;
+    const pastList = document.getElementById('tasks-list');
+    pastList.innerHTML = pastDayHtml(p, taskDay);
+    pastList.querySelectorAll('.backfill-routine').forEach(btn => {
+      btn.addEventListener('click', () => openBackfill('routine', btn.dataset.id));
+    });
+    renderCatalogFilters();
+    renderCatalogList();
+    return;
+  }
   const today = localDayKey(new Date());
   const myTasks = state.tasks.filter(t => t.assigneeId === p.id && !t.archived && !t.done)
     .sort((a, b) => (b.routineId ? 1 : 0) - (a.routineId ? 1 : 0));
@@ -1245,9 +1423,9 @@ function renderCatalogList() {
   if (!catList) return;
   const p = getCurrentProfile();
   const limit = state.settings.dailyTaskLimit || 3;
-  const doneToday = p ? tasksDoneToday(p.id) : 0;
+  const doneToday = p ? tasksDoneOnDay(p.id, taskDay || todayKey()) : 0;
   const atLimit = doneToday >= limit;
-  const myActiveIds = new Set(
+  const myActiveIds = taskDay ? new Set() : new Set(
     state.tasks.filter(t => t.assigneeId === (p && p.id) && !t.done && !t.archived).map(t => t.templateId)
   );
 
@@ -1268,7 +1446,7 @@ function renderCatalogList() {
   catList.innerHTML = templates.map(t => {
     const already = myActiveIds.has(t.id);
     const disabled = atLimit || already;
-    let btnLabel = 'Je la fais';
+    let btnLabel = taskDay ? 'Faite ce jour-là' : 'Je la fais';
     if (already) btnLabel = 'Déjà prise';
     else if (atLimit) btnLabel = 'Limite atteinte';
     return `
@@ -1286,7 +1464,7 @@ function renderCatalogList() {
   }).join('');
 
   catList.querySelectorAll('.btn-claim:not(:disabled)').forEach(btn => {
-    btn.addEventListener('click', () => claimTask(btn.dataset.id));
+    btn.addEventListener('click', () => taskDay ? openBackfill('template', btn.dataset.id) : claimTask(btn.dataset.id));
   });
 }
 
@@ -1340,6 +1518,8 @@ function openDifficultyModal(taskId) {
     return;
   }
   pendingCompleteTaskId = taskId;
+  pendingDraft = null;
+  showDayAlert(null);
   selectedFelt = 2;
   document.getElementById('diff-task-name').textContent = task.name;
   let bonus = 0;
@@ -1355,24 +1535,34 @@ function openDifficultyModal(taskId) {
 }
 
 function confirmComplete() {
-  const task = state.tasks.find(t => t.id === pendingCompleteTaskId);
+  const task = pendingDraft || state.tasks.find(t => t.id === pendingCompleteTaskId);
   if (!task || task.done) return;
   const profile = state.profiles.find(p => p.id === task.assigneeId);
   if (!profile || profile.type !== 'child') return;
+  const day = task.backfillDay || null;
 
   const limit = state.settings.dailyTaskLimit || 3;
-  if (!task.routineId && tasksDoneToday(profile.id) >= limit) {
+  if (!task.routineId && tasksDoneOnDay(profile.id, day || todayKey()) >= limit) {
     showToast(`Limite de ${limit} tâches au choix / jour atteinte`);
     closeModal('modal-difficulty');
     return;
   }
 
   ensureInvestFields(profile);
-  const bonus = Math.round(task.points * taskBoost(profile, task.category, true) / 100);
+  const bonus = Math.round(task.points * taskBoost(profile, task.category, !day) / 100);
   const earned = task.points + bonus;
 
+  if (day) {
+    // Tâche d'un jour passé : datée à midi ce jour-là
+    if (state.tasks.indexOf(task) === -1) state.tasks.push(task);
+    task.archived = false;
+    task.missed = false;
+    task.backfilledAt = new Date().toISOString();
+    delete task.backfillDay;
+    pendingDraft = null;
+  }
   task.done = true;
-  task.completedAt = new Date().toISOString();
+  task.completedAt = day ? new Date(day + 'T12:00:00').toISOString() : new Date().toISOString();
   task.feltDifficulty = selectedFelt;
   task.bonusPoints = bonus;
   task.earnedPoints = earned;
@@ -1394,7 +1584,7 @@ function confirmComplete() {
   updateStatsBar();
   renderProgress();
 
-  showToast(bonus ? `+${earned} points (dont 🏢 +${bonus}) ! 🎉` : `+${earned} points ! 🎉`);
+  showToast((bonus ? `+${earned} points (dont 🏢 +${bonus})` : `+${earned} points`) + (day ? ` · ${formatDate(day + 'T12:00:00')}` : ' ! 🎉'));
   if (leveled) {
     setTimeout(() => {
       const title = getTitleForLevel(profile.level);
@@ -2464,6 +2654,16 @@ function init() {
   document.getElementById('btn-save-template').addEventListener('click', saveTemplate);
   document.getElementById('btn-do-assign').addEventListener('click', doAssign);
   document.getElementById('assign-recurrence').addEventListener('change', renderAssignDays);
+  document.getElementById('tab-tasks').addEventListener('click', e => {
+    const nav = e.target.closest('[data-strip-week]');
+    if (nav && !nav.disabled) {
+      stripWeekOffset = Math.min(0, stripWeekOffset + parseInt(nav.dataset.stripWeek));
+      renderChildTasks();
+    }
+    if (e.target.closest('[data-day-today]')) setTaskDay(null);
+    const pick = e.target.closest('.week-day.pickable');
+    if (pick) setTaskDay(pick.dataset.pickDay);
+  });
   document.getElementById('assign-days').addEventListener('click', e => {
     const btn = e.target.closest('[data-day]');
     if (!btn) return;
