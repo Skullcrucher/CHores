@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.7.0';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -1136,7 +1136,7 @@ function switchDraftToToday() {
 
 function migrateProfiles() {
   const before = JSON.stringify(state.profiles);
-  state.profiles.filter(p => p.type === 'child').forEach(ensureInvestFields);
+  state.profiles.filter(p => p.type === 'child').forEach(p => { ensureInvestFields(p); ensureRewardFields(p); });
   if (JSON.stringify(state.profiles) !== before) saveState();
 }
 
@@ -1190,6 +1190,272 @@ function avatarSVG(avatarId, size = 80) {
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
+// ---------- RÉCOMPENSES (coffres aléatoires) ----------
+// Un coffre par niveau gagné. La rareté est tirée selon le niveau (plus on monte,
+// plus le rare devient probable), puis un objet pas encore possédé de cette rareté.
+const RARITIES = [
+  { id: 'common',    name: 'Commun',     color: '#64748B' },
+  { id: 'rare',      name: 'Rare',       color: '#2563EB' },
+  { id: 'epic',      name: 'Épique',     color: '#9333EA' },
+  { id: 'legendary', name: 'Légendaire', color: '#D97706' },
+];
+const MAX_WELCOME_CHESTS = 3;
+
+/** Avatars à débloquer (ajoutés à AVATARS mais absents du choix à la création). */
+const REWARD_AVATARS = [
+  { id: 'frog', emoji: '🐸', color: '#86EFAC', rarity: 'common', name: 'Grenouille' },
+  { id: 'monkey', emoji: '🐵', color: '#FCD34D', rarity: 'common', name: 'Singe' },
+  { id: 'penguin', emoji: '🐧', color: '#93C5FD', rarity: 'common', name: 'Pingouin' },
+  { id: 'hamster', emoji: '🐹', color: '#FDBA74', rarity: 'common', name: 'Hamster' },
+  { id: 'lion', emoji: '🦁', color: '#FBBF24', rarity: 'rare', name: 'Lion' },
+  { id: 'tiger', emoji: '🐯', color: '#FB923C', rarity: 'rare', name: 'Tigre' },
+  { id: 'owl', emoji: '🦉', color: '#A78BFA', rarity: 'rare', name: 'Hibou' },
+  { id: 'octopus', emoji: '🐙', color: '#F472B6', rarity: 'rare', name: 'Pieuvre' },
+  { id: 'dino', emoji: '🦖', color: '#4ADE80', rarity: 'epic', name: 'Dino' },
+  { id: 'shark', emoji: '🦈', color: '#38BDF8', rarity: 'epic', name: 'Requin' },
+  { id: 'butterfly', emoji: '🦋', color: '#C4B5FD', rarity: 'epic', name: 'Papillon' },
+  { id: 'dragon', emoji: '🐲', color: '#22C55E', rarity: 'legendary', name: 'Dragon' },
+  { id: 'wizard', emoji: '🧙', color: '#6366F1', rarity: 'legendary', name: 'Magicien' },
+];
+REWARD_AVATARS.forEach(a => AVATARS.push(Object.assign({ reward: true }, a)));
+
+const REWARD_FRAMES = [
+  { id: 'bronze', name: 'Cadre bronze', rarity: 'common' },
+  { id: 'silver', name: 'Cadre argent', rarity: 'rare' },
+  { id: 'mint', name: 'Cadre menthe', rarity: 'rare' },
+  { id: 'gold', name: 'Cadre or', rarity: 'epic' },
+  { id: 'fire', name: 'Cadre de feu', rarity: 'epic' },
+  { id: 'rainbow', name: 'Cadre arc-en-ciel', rarity: 'legendary' },
+  { id: 'galaxy', name: 'Cadre galaxie', rarity: 'legendary' },
+];
+
+const REWARD_THEMES = [
+  { id: 'mint', label: 'Menthe', name: 'Thème Menthe', rarity: 'rare', swatch: '#0D9488' },
+  { id: 'candy', label: 'Bonbon', name: 'Thème Bonbon', rarity: 'rare', swatch: '#EC4899' },
+  { id: 'lava', label: 'Lave', name: 'Thème Lave', rarity: 'epic', swatch: '#DC2626' },
+  { id: 'gold', label: 'Or', name: 'Thème Or', rarity: 'epic', swatch: '#B45309' },
+  { id: 'space', label: 'Espace', name: 'Thème Espace', rarity: 'legendary', swatch: '#7C3AED' },
+];
+
+const REWARD_BADGES = [
+  { id: 'table', emoji: '🍽️', name: 'Pro de la table', rarity: 'common' },
+  { id: 'sponge', emoji: '🧽', name: 'Éponge magique', rarity: 'common' },
+  { id: 'rising', emoji: '🌟', name: 'Étoile montante', rarity: 'common' },
+  { id: 'flash', emoji: '⚡', name: 'Éclair', rarity: 'rare' },
+  { id: 'broom', emoji: '🧹', name: 'Balai d’or', rarity: 'rare' },
+  { id: 'hero', emoji: '🦸', name: 'Super-héros du foyer', rarity: 'epic' },
+  { id: 'legend', emoji: '👑', name: 'Légende', rarity: 'legendary' },
+];
+
+const REWARD_POINTS = { common: 20, rare: 50, epic: 120, legendary: 300 };
+
+function rarityOf(id) {
+  return RARITIES.find(r => r.id === id) || RARITIES[0];
+}
+
+/** Chances (%) par rareté selon le niveau : le légendaire passe de 1 % à 12 %. */
+function rarityOdds(level) {
+  const lv = Math.max(1, level || 1);
+  const legendary = Math.min(12, 1 + (lv - 1) * 0.5);
+  const epic = Math.min(25, 6 + (lv - 1) * 0.8);
+  const rare = Math.min(35, 25 + (lv - 1) * 0.5);
+  return { common: 100 - legendary - epic - rare, rare, epic, legendary };
+}
+
+function ensureRewardFields(p) {
+  if (p.type !== 'child') return;
+  if (!p.rewards) {
+    p.rewards = { avatars: [], frames: [], themes: [], badges: [] };
+    // Les enfants déjà avancés reçoivent quelques coffres de bienvenue
+    p.pendingChests = Math.min(MAX_WELCOME_CHESTS, Math.max(0, (p.level || 1) - 1));
+  }
+  if (p.pendingChests == null) p.pendingChests = 0;
+}
+
+function rewardPool(p, rarity) {
+  const r = p.rewards;
+  return [].concat(
+    REWARD_AVATARS.filter(x => x.rarity === rarity && r.avatars.indexOf(x.id) === -1).map(x => ({ kind: 'avatar', item: x })),
+    REWARD_FRAMES.filter(x => x.rarity === rarity && r.frames.indexOf(x.id) === -1).map(x => ({ kind: 'frame', item: x })),
+    REWARD_THEMES.filter(x => x.rarity === rarity && r.themes.indexOf(x.id) === -1).map(x => ({ kind: 'theme', item: x })),
+    REWARD_BADGES.filter(x => x.rarity === rarity && r.badges.indexOf(x.id) === -1).map(x => ({ kind: 'badge', item: x })),
+    [{ kind: 'points', item: { id: 'pts', name: `${REWARD_POINTS[rarity]} points`, amount: REWARD_POINTS[rarity] } }]
+  );
+}
+
+function drawRarity(level) {
+  const odds = rarityOdds(level);
+  let roll = Math.random() * 100;
+  for (const r of ['legendary', 'epic', 'rare', 'common']) {
+    roll -= odds[r];
+    if (roll < 0) return r;
+  }
+  return 'common';
+}
+
+/** Ouvre un coffre : renvoie la récompense obtenue (déjà enregistrée sur le profil). */
+function openChest(p) {
+  ensureRewardFields(p);
+  if (p.pendingChests <= 0) return null;
+  p.pendingChests--;
+  p.chestsOpened = (p.chestsOpened || 0) + 1;
+  const rarity = drawRarity(p.level);
+  const pool = rewardPool(p, rarity);
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  const result = { rarity, kind: pick.kind, item: pick.item };
+  if (pick.kind === 'points') {
+    p.points = (p.points || 0) + pick.item.amount;
+  } else {
+    p.rewards[pick.kind + 's'].push(pick.item.id);
+  }
+  return result;
+}
+
+function frameClass(p) {
+  return p && p.frame ? ` frame-${p.frame}` : '';
+}
+
+function badgeOf(p) {
+  return p && p.badge ? REWARD_BADGES.find(b => b.id === p.badge) : null;
+}
+
+function rewardVisual(kind, item) {
+  if (kind === 'avatar') return `<img class="rw-avatar" src="${avatarSVG(item.id, 96)}" alt="">`;
+  if (kind === 'frame') return `<img class="rw-avatar frame-${item.id}" src="${avatarSVG(getCurrentProfile().avatar, 96)}" alt="">`;
+  if (kind === 'theme') return `<span class="rw-swatch" style="background:${item.swatch}">🎨</span>`;
+  if (kind === 'badge') return `<span class="rw-emoji">${item.emoji}</span>`;
+  return '<span class="rw-emoji">🪙</span>';
+}
+
+const KIND_LABELS = { avatar: 'Nouvel avatar', frame: 'Nouveau cadre', theme: 'Thème exclusif', badge: 'Nouveau badge', points: 'Points bonus' };
+
+function renderChestButton(p) {
+  const btn = document.getElementById('btn-chest');
+  if (!btn) return;
+  const n = (p && p.pendingChests) || 0;
+  btn.style.display = n > 0 ? '' : 'none';
+  btn.innerHTML = `🎁<span class="chest-count">${n}</span>`;
+}
+
+function openChestModal() {
+  const p = getCurrentProfile();
+  if (!p) return;
+  ensureRewardFields(p);
+  const body = document.getElementById('chest-body');
+  if (p.pendingChests <= 0) { closeModal('modal-chest'); return; }
+  body.innerHTML = `
+    <div class="chest-closed">🎁</div>
+    <p class="hint">Tu as <strong>${p.pendingChests}</strong> coffre${p.pendingChests > 1 ? 's' : ''} à ouvrir !</p>
+    <button class="btn-primary btn-large" id="btn-open-chest">Ouvrir le coffre !</button>`;
+  document.getElementById('btn-open-chest').addEventListener('click', revealChest);
+  openModal('modal-chest');
+}
+
+function revealChest() {
+  const p = getCurrentProfile();
+  const box = document.querySelector('#chest-body .chest-closed');
+  if (box) box.classList.add('opening');
+  const btn = document.getElementById('btn-open-chest');
+  if (btn) btn.disabled = true;
+  setTimeout(() => {
+    const res = openChest(p);
+    if (!res) return;
+    saveState();
+    const rar = rarityOf(res.rarity);
+    const equipable = res.kind !== 'points';
+    document.getElementById('chest-body').innerHTML = `
+      <div class="reward-card rarity-${res.rarity}" style="--rar:${rar.color}">
+        <div class="rw-rarity">${rar.name}</div>
+        ${rewardVisual(res.kind, res.item)}
+        <div class="rw-kind">${KIND_LABELS[res.kind]}</div>
+        <div class="rw-name">${res.item.name || ''}</div>
+      </div>
+      <div class="modal-actions">
+        ${equipable ? `<button class="btn-secondary" id="btn-equip-reward">Équiper</button>` : ''}
+        <button class="btn-primary" id="btn-chest-next">${p.pendingChests > 0 ? `Coffre suivant (${p.pendingChests})` : 'Super !'}</button>
+      </div>`;
+    if (equipable) {
+      document.getElementById('btn-equip-reward').addEventListener('click', () => {
+        equipReward(p, res.kind, res.item.id);
+        document.getElementById('btn-equip-reward').textContent = 'Équipé ✔';
+        document.getElementById('btn-equip-reward').disabled = true;
+      });
+    }
+    document.getElementById('btn-chest-next').addEventListener('click', () => {
+      if (p.pendingChests > 0) openChestModal(); else closeModal('modal-chest');
+    });
+    refreshChildChrome();
+  }, 900);
+}
+
+function equipReward(p, kind, id) {
+  if (kind === 'avatar') {
+    // On mémorise l'avatar choisi à la création pour pouvoir y revenir
+    const isBase = a => AVATARS.some(x => x.id === a && !x.reward);
+    if (isBase(p.avatar)) p.baseAvatar = p.avatar;
+    p.avatar = id;
+  }
+  if (kind === 'frame') p.frame = p.frame === id ? null : id;
+  if (kind === 'badge') p.badge = p.badge === id ? null : id;
+  if (kind === 'theme') { p.theme = id; applyProfileTheme(); }
+  saveState();
+  refreshChildChrome();
+}
+
+/** Met à jour l'en-tête (avatar, cadre, badge, coffres) et la collection. */
+function refreshChildChrome() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  const img = document.getElementById('current-avatar');
+  img.src = avatarSVG(p.avatar, 42);
+  img.className = 'avatar-sm' + frameClass(p);
+  const title = getTitleForLevel(p.level || 1);
+  const badge = badgeOf(p);
+  document.getElementById('current-title').textContent = `${title.emoji} ${title.name}` + (badge ? ` · ${badge.emoji} ${badge.name}` : '');
+  renderChestButton(p);
+  updateStatsBar();
+  renderCollection(p);
+}
+
+function renderCollection(p) {
+  const el = document.getElementById('collection');
+  if (!el || !p) return;
+  ensureRewardFields(p);
+  const odds = rarityOdds(p.level);
+  const r = p.rewards;
+  const tile = (kind, item, owned, equipped, visual) => {
+    const rar = rarityOf(item.rarity);
+    return `<button type="button" class="col-tile ${owned ? 'owned' : 'locked'} ${equipped ? 'equipped' : ''}"
+      style="--rar:${rar.color}" ${owned ? `data-equip="${kind}" data-id="${item.id}"` : 'disabled'} title="${item.name} (${rar.name})">
+      ${owned ? visual : '<span class="rw-emoji small">🔒</span>'}
+      <span class="col-name">${owned ? item.name : rar.name}</span>
+    </button>`;
+  };
+  const baseAvatars = AVATARS.filter(a => !a.reward);
+  el.innerHTML = `
+    <div class="section-header" style="margin-bottom:0.3rem">
+      <h3>🎁 Ma collection</h3>
+      ${p.pendingChests > 0 ? `<button class="btn-primary btn-sm" data-open-chest>Ouvrir ${p.pendingChests} coffre${p.pendingChests > 1 ? 's' : ''}</button>` : ''}
+    </div>
+    <p class="hint">Un coffre à chaque niveau gagné. Chances au niveau ${p.level || 1} :
+      ${RARITIES.map(x => `<span style="color:${x.color};font-weight:700">${x.name} ${Math.round(odds[x.id] * 10) / 10} %</span>`).join(' · ')}.
+      Un doublon est transformé en points.</p>
+    <div class="col-group"><strong>Avatars</strong><div class="col-grid">
+      ${baseAvatars.filter(a => a.id === (p.baseAvatar || p.avatar)).map(a => tile('avatar', Object.assign({ name: 'Mon avatar', rarity: 'common' }, a), true, p.avatar === a.id, `<img class="rw-avatar small" src="${avatarSVG(a.id, 56)}" alt="">`)).join('')}
+      ${REWARD_AVATARS.map(a => tile('avatar', a, r.avatars.indexOf(a.id) !== -1, p.avatar === a.id, `<img class="rw-avatar small" src="${avatarSVG(a.id, 56)}" alt="">`)).join('')}
+    </div></div>
+    <div class="col-group"><strong>Cadres</strong><div class="col-grid">
+      ${REWARD_FRAMES.map(f => tile('frame', f, r.frames.indexOf(f.id) !== -1, p.frame === f.id, `<img class="rw-avatar small frame-${f.id}" src="${avatarSVG(p.avatar, 56)}" alt="">`)).join('')}
+    </div></div>
+    <div class="col-group"><strong>Thèmes exclusifs</strong><div class="col-grid">
+      ${REWARD_THEMES.map(t => tile('theme', t, r.themes.indexOf(t.id) !== -1, p.theme === t.id, `<span class="rw-swatch small" style="background:${t.swatch}"></span>`)).join('')}
+    </div></div>
+    <div class="col-group"><strong>Badges</strong><div class="col-grid">
+      ${REWARD_BADGES.map(b => tile('badge', b, r.badges.indexOf(b.id) !== -1, p.badge === b.id, `<span class="rw-emoji small">${b.emoji}</span>`)).join('')}
+    </div></div>`;
+}
+
+
 /** Hash simple pour mot de passe (pas crypto fort, mais suffisant hors-ligne) */
 async function hashPassword(pwd) {
   const enc = new TextEncoder().encode('chores_salt_' + pwd);
@@ -1213,7 +1479,7 @@ function renderProfiles() {
     const title = getTitleForLevel(p.level || 1);
     return `
       <div class="profile-card ${isParent ? 'parent-card' : ''}" data-id="${p.id}">
-        <img class="avatar" src="${avatarSVG(p.avatar)}" alt="${p.name}">
+        <img class="avatar${frameClass(p)}" src="${avatarSVG(p.avatar)}" alt="${p.name}">
         <div class="name">${p.name}</div>
         ${isParent
           ? '<div class="badge-parent">🔑 Parent</div>'
@@ -1266,12 +1532,9 @@ function showMainChild() {
   taskDay = null;
   stripWeekOffset = 0;
 
-  document.getElementById('current-avatar').src = avatarSVG(p.avatar, 42);
   document.getElementById('current-name').textContent = p.name;
-  const title = getTitleForLevel(p.level || 1);
-  document.getElementById('current-title').textContent = `${title.emoji} ${title.name}`;
-
-  updateStatsBar();
+  ensureRewardFields(p);
+  refreshChildChrome();
   renderChildTasks();
   renderWallet();
   renderCompany();
@@ -1576,8 +1839,10 @@ function confirmComplete() {
   profile.xp = (profile.xp || 0) + earned;
 
   let leveled = false;
+  ensureRewardFields(profile);
   while (profile.xp >= xpForLevel((profile.level || 1) + 1)) {
     profile.level = (profile.level || 1) + 1;
+    profile.pendingChests++;
     leveled = true;
   }
 
@@ -1591,7 +1856,8 @@ function confirmComplete() {
   if (leveled) {
     setTimeout(() => {
       const title = getTitleForLevel(profile.level);
-      showToast(`Niveau ${profile.level} ! ${title.emoji} ${title.name}`, 3500);
+      showToast(`Niveau ${profile.level} ! ${title.emoji} ${title.name} · 🎁 Coffre gagné !`, 3500);
+      refreshChildChrome();
     }, 800);
   }
 }
@@ -2096,6 +2362,7 @@ function renderProgress() {
   document.getElementById('stat-tasks-done').textContent = p.tasksDone || 0;
   document.getElementById('stat-points-total').textContent = p.pointsTotal || 0;
   document.getElementById('stat-money-total').textContent = formatMoney(p.moneyTotal || 0);
+  renderCollection(p);
 }
 
 // ---------- ADMIN ----------
@@ -2578,7 +2845,7 @@ function openProfileModal() {
   });
 
   const grid = document.getElementById('avatars-grid');
-  grid.innerHTML = AVATARS.map(a => `
+  grid.innerHTML = AVATARS.filter(a => !a.reward).map(a => `
     <img class="avatar-option ${a.id === selectedAvatar ? 'selected' : ''}"
          src="${avatarSVG(a.id, 64)}" data-id="${a.id}" alt="">
   `).join('');
@@ -2717,8 +2984,8 @@ function applyProfileTheme() {
   setBodyTheme((p && p.theme) || state.settings.theme || 'default');
 }
 
-function themeButtons(selected) {
-  return THEMES.map(t =>
+function themeButtons(selected, extra) {
+  return THEMES.concat(extra || []).map(t =>
     `<button class="theme-btn ${selected === t.id ? 'selected' : ''}" data-theme="${t.id}">${t.label}</button>`).join('');
 }
 
@@ -2727,7 +2994,10 @@ function openProfileTheme() {
   if (!p) return;
   document.getElementById('profile-theme-title').textContent = `🎨 Thème de ${p.name}`;
   const grid = document.getElementById('profile-themes-grid');
-  grid.innerHTML = themeButtons(p.theme || state.settings.theme || 'default');
+  const unlocked = p.rewards ? REWARD_THEMES.filter(t => p.rewards.themes.indexOf(t.id) !== -1) : [];
+  grid.innerHTML = themeButtons(p.theme || state.settings.theme || 'default', unlocked)
+    + (p.type === 'child' && unlocked.length < REWARD_THEMES.length
+      ? `<p class="hint" style="grid-column:1/-1">🔒 ${REWARD_THEMES.length - unlocked.length} thème(s) exclusif(s) à gagner dans les coffres 🎁</p>` : '');
   openModal('modal-theme');
 }
 
@@ -3010,6 +3280,16 @@ function init() {
     openProfileTheme();
     if (p.type === 'parent') renderAdminStats();
     showToast('Thème appliqué 🎨');
+  });
+  document.getElementById('btn-chest').addEventListener('click', openChestModal);
+  document.getElementById('tab-progress').addEventListener('click', e => {
+    if (e.target.closest('[data-open-chest]')) { openChestModal(); return; }
+    const t = e.target.closest('[data-equip]');
+    const p = getCurrentProfile();
+    if (t && p) {
+      equipReward(p, t.dataset.equip, t.dataset.id);
+      showToast('Équipé ✔');
+    }
   });
   document.getElementById('btn-euros').addEventListener('click', convertEuros);
   document.getElementById('convert-euros').addEventListener('input', updateEurosPreview);

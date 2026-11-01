@@ -95,6 +95,7 @@
           <div class="stat"><span class="stat-value" id="stat-level">1</span><span class="stat-label">Niveau</span></div>
           <div class="stat"><span class="stat-value" id="stat-invest">0</span><span class="stat-label">Investis</span></div>
         </div>
+        <button class="icon-btn chest-btn" id="btn-chest" title="Coffres à ouvrir" style="display:none">🎁</button>
         <button class="icon-btn" id="btn-theme" title="Mon thème">🎨</button>
       </header>
 
@@ -182,6 +183,7 @@
             <h3>Titres débloqués</h3>
             <div id="titles-list" class="titles-grid"></div>
           </div>
+          <div class="collection-box" id="collection"></div>
           <div class="stats-detail">
             <h3>Statistiques</h3>
             <div class="stat-row"><span>Tâches réalisées</span><span id="stat-tasks-done">0</span></div>
@@ -414,6 +416,12 @@
           <button class="btn-primary" id="btn-backup-copy">📋 Copier</button>
           <button class="btn-primary" id="btn-backup-restore" style="display:none">Restaurer</button>
         </div>
+      </div>
+    </div>
+
+    <div id="modal-chest" class="modal">
+      <div class="modal-content chest-modal">
+        <div id="chest-body"></div>
       </div>
     </div>
 
