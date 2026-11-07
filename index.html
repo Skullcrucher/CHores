@@ -51,7 +51,7 @@
           <label>Prénom</label>
           <input type="text" id="profile-name" placeholder="Ex: Léa" maxlength="20">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="group-type">
           <label>Type de profil</label>
           <div class="type-selector">
             <button type="button" class="type-btn active" data-type="child">👶 Enfant</button>
@@ -59,9 +59,10 @@
           </div>
         </div>
         <div class="form-group" id="group-password" style="display:none">
-          <label>Mot de passe parent</label>
+          <label id="password-label">Mot de passe parent</label>
           <input type="password" id="profile-password" placeholder="Choisis un mot de passe" autocomplete="new-password">
-          <p class="hint">Obligatoire. Protège l’accès admin.</p>
+          <input type="password" id="profile-password-confirm" placeholder="Retape le mot de passe" autocomplete="new-password" style="margin-top:0.5rem">
+          <p class="hint" id="password-help">Obligatoire. Protège l’accès admin.</p>
         </div>
         <div class="form-group" id="group-ceiling">
           <label>Plafond d'argent de poche mensuel (€)</label>

@@ -1,4 +1,4 @@
-const CACHE = 'chores-v16';
+const CACHE = 'chores-v17';
 const ASSETS = [
   './',
   './index.html',
