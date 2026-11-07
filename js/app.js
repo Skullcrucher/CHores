@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.9.0';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -2570,12 +2570,44 @@ function renderAdminFamily() {
           <div class="fname">${p.name} ${isParent ? '🔑' : ''}</div>
           <div class="fmeta">
             ${isParent
-              ? 'Parent · Admin'
+              ? (p.id === state.currentProfileId ? 'Parent · Admin · c’est toi' : 'Parent · Admin')
               : `Niv. ${p.level || 1} · ${p.points || 0} pts · ${formatMoney(p.wallet || 0)} (plafond ${p.ceiling || 20} €) · ${p.tasksDone || 0} tâches · ${companyLevel(p).emoji} ${companyLevel(p).name} · ⚙️ ${Math.round(efficiency(p) * 100)} %`}
           </div>
         </div>
+        <div class="task-actions">
+          <button data-edit-profile="${p.id}" title="${isParent ? 'Modifier / changer le mot de passe' : 'Modifier'}">${isParent ? '🔑' : '✏️'}</button>
+          ${p.id === state.currentProfileId ? '' : `<button data-delete-profile="${p.id}" title="Supprimer">🗑️</button>`}
+        </div>
       </div>`;
   }).join('');
+}
+
+/** Supprime un membre (jamais soi-même, jamais le dernier parent). */
+function deleteProfile(id) {
+  const p = state.profiles.find(x => x.id === id);
+  const me = getCurrentProfile();
+  if (!p || !me) return;
+  if (p.id === me.id) { showToast('Tu ne peux pas supprimer ton propre profil'); return; }
+  if (p.type === 'parent' && state.profiles.filter(x => x.type === 'parent').length <= 1) {
+    showToast('Il faut garder au moins un parent');
+    return;
+  }
+  const warn = p.type === 'child'
+    ? `Supprimer ${p.name} ?\n\nSes points, son argent (${formatMoney(p.wallet || 0)}), ses tâches, ses routines et son entreprise seront effacés définitivement.`
+    : `Supprimer le profil parent « ${p.name} » ?`;
+  if (!confirm(warn)) return;
+  if (p.type === 'child' && !confirm(`Dernière confirmation : effacer définitivement ${p.name} ?`)) return;
+  createAutoBackup();
+  state.profiles = state.profiles.filter(x => x.id !== id);
+  if (p.type === 'child') {
+    state.tasks = state.tasks.filter(t => t.assigneeId !== id);
+    state.routines = (state.routines || []).filter(r => r.assigneeId !== id);
+    state.payouts = (state.payouts || []).filter(x => x.childId !== id || x.status === 'paid');
+  }
+  saveState();
+  renderAdminFamily();
+  renderAdminTasks();
+  showToast(`${p.name} a été supprimé(e)`);
 }
 
 function answerRaise(childId, accept) {
@@ -3037,22 +3069,32 @@ function saveTemplate() {
 }
 
 // ---------- PROFILE MODAL ----------
-function openProfileModal() {
-  editingProfileId = null;
-  selectedAvatar = 'boy1';
-  selectedProfileType = 'child';
-  document.getElementById('modal-profile-title').textContent = 'Nouveau membre';
-  document.getElementById('profile-name').value = '';
+/** Nouveau membre, ou modification d'un membre existant (depuis l'espace parent). */
+function openProfileModal(editId) {
+  const editing = typeof editId === 'string' ? state.profiles.find(p => p.id === editId) : null;
+  editingProfileId = editing ? editing.id : null;
+  selectedAvatar = editing ? editing.avatar : 'boy1';
+  selectedProfileType = editing ? editing.type : 'child';
+  document.getElementById('modal-profile-title').textContent = editing ? `✏️ Modifier ${editing.name}` : 'Nouveau membre';
+  document.getElementById('profile-name').value = editing ? editing.name : '';
   document.getElementById('profile-password').value = '';
-  document.getElementById('profile-ceiling').value = 20;
-  document.getElementById('group-password').style.display = 'none';
-  document.getElementById('group-ceiling').style.display = 'block';
+  document.getElementById('profile-password-confirm').value = '';
+  document.getElementById('profile-ceiling').value = editing && editing.type === 'child' ? (editing.ceiling || 20) : 20;
+  document.getElementById('group-type').style.display = editing ? 'none' : '';
+  document.getElementById('group-password').style.display = selectedProfileType === 'parent' ? 'block' : 'none';
+  document.getElementById('group-ceiling').style.display = selectedProfileType === 'child' ? 'block' : 'none';
+  document.getElementById('password-label').textContent = editing ? 'Nouveau mot de passe' : 'Mot de passe parent';
+  document.getElementById('password-help').textContent = editing
+    ? 'Laisse vide pour garder le mot de passe actuel. Note-le bien : il ne peut pas être retrouvé.'
+    : 'Obligatoire. Protège l’accès admin. Note-le bien : il ne peut pas être retrouvé.';
   document.querySelectorAll('.type-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.type === 'child');
+    b.classList.toggle('active', b.dataset.type === selectedProfileType);
   });
 
+  // Avatars de base + avatars gagnés dans les coffres (enfant en modification)
+  const owned = editing && editing.rewards ? editing.rewards.avatars : [];
   const grid = document.getElementById('avatars-grid');
-  grid.innerHTML = AVATARS.filter(a => !a.reward).map(a => `
+  grid.innerHTML = AVATARS.filter(a => !a.reward || owned.indexOf(a.id) !== -1 || (editing && a.id === editing.avatar)).map(a => `
     <img class="avatar-option ${a.id === selectedAvatar ? 'selected' : ''}"
          src="${avatarSVG(a.id, 64)}" data-id="${a.id}" alt="">
   `).join('');
@@ -3069,13 +3111,41 @@ function openProfileModal() {
 async function saveProfile() {
   const name = document.getElementById('profile-name').value.trim();
   if (!name) { showToast('Le prénom est obligatoire'); return; }
+  const pwd = document.getElementById('profile-password').value;
+  const pwd2 = document.getElementById('profile-password-confirm').value;
+
+  if (editingProfileId) {
+    const p = state.profiles.find(x => x.id === editingProfileId);
+    if (!p) return;
+    if (p.type === 'parent' && pwd) {
+      if (pwd.length < 3) { showToast('Mot de passe trop court (min. 3 caractères)'); return; }
+      if (pwd !== pwd2) { showToast('Les deux mots de passe ne correspondent pas'); return; }
+      p.passwordHash = await hashPassword(pwd);
+    }
+    p.name = name;
+    if (p.avatar !== selectedAvatar) {
+      if (p.type === 'child' && AVATARS.some(a => a.id === selectedAvatar && !a.reward)) p.baseAvatar = selectedAvatar;
+      p.avatar = selectedAvatar;
+    }
+    if (p.type === 'child') p.ceiling = Math.max(0, parseFloat(document.getElementById('profile-ceiling').value) || 0);
+    saveState();
+    closeModal('modal-profile');
+    const me = getCurrentProfile();
+    if (me && me.type === 'parent') {
+      document.getElementById('admin-avatar').src = avatarSVG(me.avatar, 42);
+      document.getElementById('admin-name').textContent = me.name;
+    }
+    renderAdminFamily();
+    showToast(p.type === 'parent' && pwd ? `Profil et mot de passe de ${name} mis à jour 🔑` : `Profil de ${name} mis à jour ✔`);
+    return;
+  }
 
   if (selectedProfileType === 'parent') {
-    const pwd = document.getElementById('profile-password').value;
     if (!pwd || pwd.length < 3) {
       showToast('Mot de passe parent requis (min. 3 caractères)');
       return;
     }
+    if (pwd !== pwd2) { showToast('Les deux mots de passe ne correspondent pas'); return; }
     const passwordHash = await hashPassword(pwd);
     state.profiles.push({
       id: 'p_' + Date.now(),
@@ -3464,7 +3534,7 @@ function init() {
     startupStep(renderProfiles);
   }, 1000);
 
-  document.getElementById('btn-add-profile').addEventListener('click', openProfileModal);
+  document.getElementById('btn-add-profile').addEventListener('click', () => openProfileModal());
   document.getElementById('btn-save-profile').addEventListener('click', saveProfile);
   document.getElementById('btn-check-password').addEventListener('click', checkPassword);
   document.getElementById('password-input').addEventListener('keydown', e => {
@@ -3554,6 +3624,10 @@ function init() {
     showToast('Mode d’augmentation mis à jour');
   });
   document.getElementById('admin-family-list').addEventListener('click', e => {
+    const ed = e.target.closest('[data-edit-profile]');
+    if (ed) { openProfileModal(ed.dataset.editProfile); return; }
+    const del = e.target.closest('[data-delete-profile]');
+    if (del) { deleteProfile(del.dataset.deleteProfile); return; }
     const settle = e.target.closest('[data-settle]');
     if (settle) { settlePayout(settle.dataset.settle, settle.dataset.method); return; }
     const pay = e.target.closest('[data-payout-child]');
