@@ -158,6 +158,7 @@
             <button class="btn-secondary btn-large" id="btn-euros">Convertir en points</button>
             <p class="hint">Les euros reconvertis libèrent d’autant ton plafond du mois.</p>
           </div>
+          <div class="convert-box" id="child-payouts"></div>
           <div class="history-box">
             <h3>Historique du mois</h3>
             <div id="wallet-history"></div>
@@ -415,6 +416,25 @@
           <button class="btn-secondary" onclick="closeModal('modal-backup')">Fermer</button>
           <button class="btn-primary" id="btn-backup-copy">📋 Copier</button>
           <button class="btn-primary" id="btn-backup-restore" style="display:none">Restaurer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-payout" class="modal">
+      <div class="modal-content">
+        <h2 id="payout-title">💶 Verser</h2>
+        <p class="hint" id="payout-balance"></p>
+        <div class="form-group">
+          <label>Montant versé (€)</label>
+          <input type="text" inputmode="decimal" id="payout-amount" autocomplete="off" placeholder="0,00">
+        </div>
+        <div class="form-group">
+          <label>Moyen</label>
+          <div class="chips" id="payout-methods"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" onclick="closeModal('modal-payout')">Annuler</button>
+          <button class="btn-primary" id="btn-confirm-payout">Enregistrer le versement</button>
         </div>
       </div>
     </div>

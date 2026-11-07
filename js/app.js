@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.7.0';
+const APP_VERSION = '3.8.0';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -1559,8 +1559,11 @@ function showMainAdmin() {
   renderAdminPlanning();
 
   const pending = state.profiles.filter(c => c.type === 'child' && c.company && pendingRaise(c));
+  const askMoney = payouts().filter(x => x.status === 'pending');
   if (pending.length) {
     setTimeout(() => showToast(`🤝 ${pending.map(c => c.name).join(', ')} : demande d’augmentation (onglet Famille)`, 4000), 500);
+  } else if (askMoney.length) {
+    setTimeout(() => showToast(`💶 ${askMoney.length} demande(s) de versement (onglet Famille)`, 4000), 500);
   }
 }
 
@@ -1901,6 +1904,7 @@ function renderWallet() {
         <div class="amount">+${formatMoney(h.amount)}</div>
       </div>`).join('');
   document.getElementById('rate-display-back').textContent = formatRate(state.settings.rate);
+  renderChildPayouts(p);
   updateEurosPreview();
 }
 
@@ -2546,7 +2550,7 @@ function renderAdminFamily() {
     list.innerHTML = `<div class="empty-state"><p>Aucun membre.</p></div>`;
     return;
   }
-  list.innerHTML = state.profiles.map(p => {
+  list.innerHTML = payoutsAdminHtml() + '<div class="section-header" style="margin-top:1rem"><h2>Membres</h2></div>' + state.profiles.map(p => {
     const isParent = p.type === 'parent';
     if (!isParent) ensureInvestFields(p);
     const req = !isParent && pendingRaise(p);
@@ -2770,6 +2774,209 @@ function renderAdminStats() {
         <tbody>${top.map(r => `<tr><td>${escapeHtml(r.name)}</td><td><strong>${r.total}</strong></td>${children.map(c => `<td>${r.per[c.id] || '·'}</td>`).join('')}<td>${feltLabel(r.felt.length ? r.felt.reduce((a, b) => a + b, 0) / r.felt.length : null)}</td></tr>`).join('')}</tbody>
       </table>` : '<p class="hint">Aucune tâche sur la période.</p>'}
     </div>`;
+}
+
+// ---------- VERSEMENTS RÉELS (argent de poche) ----------
+// Le porte-monnaie de l'enfant = argent que les parents lui doivent.
+// Une demande met le montant de côté (débité du porte-monnaie) jusqu'à ce qu'un
+// parent la marque payée (espèces, virement, tirelire) ou la refuse (montant rendu).
+const PAYOUT_METHODS = [
+  { id: 'cash', label: '💵 Espèces' },
+  { id: 'transfer', label: '🏦 Virement' },
+  { id: 'piggy', label: '🐷 Tirelire' },
+];
+let payoutChildId = null;
+let payoutMethod = 'cash';
+
+function payouts() {
+  if (!state.payouts) state.payouts = [];
+  return state.payouts;
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function pendingPayout(childId) {
+  return round2(payouts().filter(x => x.childId === childId && x.status === 'pending').reduce((s, x) => s + x.amount, 0));
+}
+
+function methodLabel(id) {
+  const m = PAYOUT_METHODS.find(x => x.id === id);
+  return m ? m.label : '';
+}
+
+function profileName(id) {
+  const p = state.profiles.find(x => x.id === id);
+  return p ? p.name : '?';
+}
+
+/** L'enfant demande à recevoir une somme : elle est mise de côté jusqu'au versement. */
+function requestPayout(amount) {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  amount = round2(amount);
+  if (!(amount > 0)) { showToast('Entre un montant valide'); return; }
+  if (amount > (p.wallet || 0) + 0.001) { showToast('Pas assez d’argent dans le porte-monnaie !'); return; }
+  p.wallet = round2((p.wallet || 0) - amount);
+  payouts().unshift({ id: newId('po_'), childId: p.id, amount, status: 'pending', requestedAt: new Date().toISOString() });
+  saveState();
+  updateStatsBar();
+  renderWallet();
+  showToast(`Demande de ${formatMoney(amount)} envoyée aux parents 💶`);
+}
+
+function cancelPayout(id) {
+  const po = payouts().find(x => x.id === id && x.status === 'pending');
+  const p = po && state.profiles.find(x => x.id === po.childId);
+  if (!po || !p) return;
+  po.status = 'cancelled';
+  po.closedAt = new Date().toISOString();
+  p.wallet = round2((p.wallet || 0) + po.amount);
+  saveState();
+  updateStatsBar();
+  renderWallet();
+  showToast('Demande annulée, argent remis dans le porte-monnaie');
+}
+
+/** Parent : marque une demande comme payée (ou la refuse, l'argent revient à l'enfant). */
+function settlePayout(id, method) {
+  const po = payouts().find(x => x.id === id && x.status === 'pending');
+  const parent = getCurrentProfile();
+  if (!po || !parent) return;
+  if (method === 'refuse') {
+    const child = state.profiles.find(x => x.id === po.childId);
+    if (!confirm(`Refuser la demande de ${formatMoney(po.amount)} ?\nL’argent retourne dans le porte-monnaie de ${child ? child.name : 'l’enfant'}.`)) return;
+    po.status = 'refused';
+    if (child) child.wallet = round2((child.wallet || 0) + po.amount);
+    showToast('Demande refusée');
+  } else {
+    po.status = 'paid';
+    po.method = method;
+    showToast(`${formatMoney(po.amount)} versés à ${profileName(po.childId)} ✔`);
+  }
+  po.parentId = parent.id;
+  po.closedAt = new Date().toISOString();
+  saveState();
+  renderAdminFamily();
+}
+
+function openPayoutModal(childId) {
+  const c = state.profiles.find(x => x.id === childId);
+  if (!c) return;
+  payoutChildId = childId;
+  payoutMethod = 'cash';
+  document.getElementById('payout-title').textContent = `💶 Verser à ${c.name}`;
+  document.getElementById('payout-balance').textContent = `Porte-monnaie : ${formatMoney(c.wallet || 0)}`;
+  document.getElementById('payout-amount').value = (c.wallet || 0) > 0 ? String(round2(c.wallet)).replace('.', ',') : '';
+  renderPayoutMethods();
+  openModal('modal-payout');
+}
+
+function renderPayoutMethods() {
+  document.getElementById('payout-methods').innerHTML = PAYOUT_METHODS.map(m =>
+    `<button type="button" class="chip ${payoutMethod === m.id ? 'strong' : ''}" data-method="${m.id}">${m.label}</button>`).join('');
+}
+
+/** Parent : versement direct sans demande préalable. */
+function confirmDirectPayout() {
+  const c = state.profiles.find(x => x.id === payoutChildId);
+  const parent = getCurrentProfile();
+  if (!c || !parent) return;
+  const amount = round2(parseDecimal(document.getElementById('payout-amount').value) || 0);
+  if (!(amount > 0)) { showToast('Entre un montant valide'); return; }
+  if (amount > (c.wallet || 0) + 0.001) { showToast(`Le porte-monnaie de ${c.name} ne contient que ${formatMoney(c.wallet || 0)}`); return; }
+  c.wallet = round2((c.wallet || 0) - amount);
+  const now = new Date().toISOString();
+  payouts().unshift({ id: newId('po_'), childId: c.id, amount, status: 'paid', method: payoutMethod, direct: true, requestedAt: now, closedAt: now, parentId: parent.id });
+  saveState();
+  closeModal('modal-payout');
+  renderAdminFamily();
+  showToast(`${formatMoney(amount)} versés à ${c.name} ✔`);
+}
+
+/** Bloc « argent de poche » de l'onglet Famille. */
+function payoutsAdminHtml() {
+  const children = state.profiles.filter(p => p.type === 'child');
+  if (!children.length) return '';
+  const month = monthKeyOf(new Date());
+  const all = payouts();
+  const pending = all.filter(x => x.status === 'pending' && children.some(c => c.id === x.childId));
+  const paidMonth = all.filter(x => x.status === 'paid' && x.closedAt && monthKeyOf(x.closedAt) === month);
+  const byParent = {};
+  paidMonth.forEach(x => { byParent[x.parentId] = (byParent[x.parentId] || 0) + x.amount; });
+  const owed = round2(children.reduce((s, c) => s + (c.wallet || 0) + pendingPayout(c.id), 0));
+  const history = all.filter(x => x.status === 'paid' || x.status === 'refused').slice(0, 12);
+
+  return `
+    <div class="payout-admin">
+      <div class="section-header"><h2>💶 Argent de poche</h2>
+        <span class="hint">Reste dû : <strong>${formatMoney(owed)}</strong></span></div>
+
+      ${pending.map(x => `
+        <div class="raise-request payout-request">
+          <span>💶 <strong>${escapeHtml(profileName(x.childId))}</strong> demande <strong>${formatMoney(x.amount)}</strong>
+            <small>· ${formatDate(x.requestedAt)}</small></span>
+          <div class="chips">
+            ${PAYOUT_METHODS.map(m => `<button class="chip strong" data-settle="${x.id}" data-method="${m.id}">Payé · ${m.label}</button>`).join('')}
+            <button class="chip" data-settle="${x.id}" data-method="refuse">Refuser</button>
+          </div>
+        </div>`).join('')}
+
+      <div class="payout-children">
+        ${children.map(c => `
+          <div class="payout-child">
+            <img src="${avatarSVG(c.avatar, 36)}" alt="">
+            <div class="pc-info"><strong>${escapeHtml(c.name)}</strong>
+              <span>Porte-monnaie ${formatMoney(c.wallet || 0)}${pendingPayout(c.id) ? ` · en attente ${formatMoney(pendingPayout(c.id))}` : ''}</span></div>
+            <button class="chip strong" data-payout-child="${c.id}" ${(c.wallet || 0) > 0 ? '' : 'disabled'}>Verser</button>
+          </div>`).join('')}
+      </div>
+
+      <div class="hint">Versé ce mois-ci : <strong>${formatMoney(paidMonth.reduce((s, x) => s + x.amount, 0))}</strong>
+        ${Object.keys(byParent).length ? '(' + Object.keys(byParent).map(id => `${escapeHtml(profileName(id))} ${formatMoney(byParent[id])}`).join(' · ') + ')' : ''}</div>
+
+      ${history.length ? `<table class="stats-table payout-table">
+        <thead><tr><th>Date</th><th>Enfant</th><th>Montant</th><th>Par</th><th>Moyen</th></tr></thead>
+        <tbody>${history.map(x => `<tr class="${x.status}">
+          <td>${formatDate(x.closedAt || x.requestedAt)}</td><td>${escapeHtml(profileName(x.childId))}</td>
+          <td><strong>${formatMoney(x.amount)}</strong></td><td>${escapeHtml(profileName(x.parentId))}</td>
+          <td>${x.status === 'refused' ? '🙅 Refusé' : methodLabel(x.method)}</td></tr>`).join('')}</tbody>
+      </table>` : '<p class="hint">Aucun versement enregistré pour l’instant.</p>'}
+    </div>`;
+}
+
+/** Bloc « demander mon argent » du portefeuille enfant. */
+function renderChildPayouts(p) {
+  const el = document.getElementById('child-payouts');
+  if (!el) return;
+  const wallet = p.wallet || 0;
+  const mine = payouts().filter(x => x.childId === p.id);
+  const pend = mine.filter(x => x.status === 'pending');
+  const done = mine.filter(x => x.status === 'paid' || x.status === 'refused').slice(0, 5);
+  const quick = [5, 10].filter(v => v < wallet);
+  el.innerHTML = `
+    <h3>💶 Recevoir mon argent</h3>
+    <p class="hint">Demande à tes parents de te verser ton argent pour de vrai. Le montant est mis de côté jusqu’à ce qu’ils te le donnent.</p>
+    <div class="chips" style="margin:0.6rem 0">
+      ${quick.map(v => `<button class="chip" data-request-payout="${v}">${formatMoney(v)}</button>`).join('')}
+      <button class="chip strong" data-request-payout="${round2(wallet)}" ${wallet > 0 ? '' : 'disabled'}>Tout (${formatMoney(wallet)})</button>
+    </div>
+    <div class="convert-row">
+      <input type="text" inputmode="decimal" id="payout-request-amount" placeholder="Autre montant (€)" autocomplete="off">
+      <button class="btn-primary" id="btn-request-payout">Demander</button>
+    </div>
+    ${pend.map(x => `
+      <div class="history-item">
+        <div><div>⏳ ${formatMoney(x.amount)} en attente des parents</div><div class="date">${formatDate(x.requestedAt)}</div></div>
+        <button class="chip" data-cancel-payout="${x.id}">Annuler</button>
+      </div>`).join('')}
+    ${done.map(x => `
+      <div class="history-item">
+        <div><div>${x.status === 'paid' ? `💶 Reçu de ${escapeHtml(profileName(x.parentId))} · ${methodLabel(x.method)}` : '🙅 Demande refusée (argent rendu)'}</div>
+          <div class="date">${formatDate(x.closedAt)}</div></div>
+        <div class="amount ${x.status === 'paid' ? '' : 'neg'}">${formatMoney(x.amount)}</div>
+      </div>`).join('')}`;
 }
 
 // ---------- TEMPLATE MODAL ----------
@@ -3292,6 +3499,20 @@ function init() {
     }
   });
   document.getElementById('btn-euros').addEventListener('click', convertEuros);
+  document.getElementById('child-payouts').addEventListener('click', e => {
+    const q = e.target.closest('[data-request-payout]');
+    if (q && !q.disabled) { requestPayout(parseFloat(q.dataset.requestPayout)); return; }
+    const c = e.target.closest('[data-cancel-payout]');
+    if (c) { cancelPayout(c.dataset.cancelPayout); return; }
+    if (e.target.closest('#btn-request-payout')) {
+      requestPayout(parseDecimal(document.getElementById('payout-request-amount').value) || 0);
+    }
+  });
+  document.getElementById('payout-methods').addEventListener('click', e => {
+    const m = e.target.closest('[data-method]');
+    if (m) { payoutMethod = m.dataset.method; renderPayoutMethods(); }
+  });
+  document.getElementById('btn-confirm-payout').addEventListener('click', confirmDirectPayout);
   document.getElementById('convert-euros').addEventListener('input', updateEurosPreview);
   document.getElementById('admin-stats').addEventListener('click', e => {
     const per = e.target.closest('[data-stats-period]');
@@ -3333,6 +3554,10 @@ function init() {
     showToast('Mode d’augmentation mis à jour');
   });
   document.getElementById('admin-family-list').addEventListener('click', e => {
+    const settle = e.target.closest('[data-settle]');
+    if (settle) { settlePayout(settle.dataset.settle, settle.dataset.method); return; }
+    const pay = e.target.closest('[data-payout-child]');
+    if (pay && !pay.disabled) { openPayoutModal(pay.dataset.payoutChild); return; }
     const btn = e.target.closest('[data-raise]');
     if (btn) answerRaise(btn.dataset.child, btn.dataset.raise === 'accept');
   });

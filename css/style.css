@@ -837,3 +837,16 @@ body.theme-space {
 /* Écran « Qui es-tu ? » : cartes à leur taille, bouton dans la largeur */
 .profiles-grid { align-content: start; }
 #btn-add-profile { width: auto; align-self: stretch; }
+
+/* Versements réels */
+.payout-admin { background: var(--card); border-radius: var(--radius); padding: 0.9rem 1rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 0.6rem; }
+.payout-admin .section-header { margin-bottom: 0; }
+.payout-request { border-color: var(--success); background: color-mix(in srgb, var(--success) 10%, var(--card)); }
+.payout-children { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 0.5rem; }
+.payout-child { display: flex; align-items: center; gap: 0.6rem; background: var(--bg); border-radius: var(--radius-sm); padding: 0.5rem 0.7rem; }
+.payout-child img { width: 36px; height: 36px; border-radius: 50%; }
+.pc-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pc-info span { font-size: 0.75rem; color: var(--text-muted); }
+.payout-table tr.refused td { color: var(--text-muted); }
+.no-flex-gap .payout-admin > * + * { margin-top: 0.6rem; }
+.no-flex-gap .payout-child > * + * { margin-left: 0.6rem; }
