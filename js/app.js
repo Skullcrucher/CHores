@@ -6,7 +6,7 @@ const STORAGE_KEY = 'chores_v3';
 const BACKUP_KEY = 'chores_backups_v3';
 const RATE_DEFAULT = 0.10;
 const MAX_AUTO_BACKUPS = 5;
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.8.0';
 
 const AVATARS = [
   { id: 'boy1', emoji: '👦', color: '#60A5FA' },
@@ -1136,7 +1136,7 @@ function switchDraftToToday() {
 
 function migrateProfiles() {
   const before = JSON.stringify(state.profiles);
-  state.profiles.filter(p => p.type === 'child').forEach(ensureInvestFields);
+  state.profiles.filter(p => p.type === 'child').forEach(p => { ensureInvestFields(p); ensureRewardFields(p); });
   if (JSON.stringify(state.profiles) !== before) saveState();
 }
 
@@ -1190,6 +1190,272 @@ function avatarSVG(avatarId, size = 80) {
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
+// ---------- RÉCOMPENSES (coffres aléatoires) ----------
+// Un coffre par niveau gagné. La rareté est tirée selon le niveau (plus on monte,
+// plus le rare devient probable), puis un objet pas encore possédé de cette rareté.
+const RARITIES = [
+  { id: 'common',    name: 'Commun',     color: '#64748B' },
+  { id: 'rare',      name: 'Rare',       color: '#2563EB' },
+  { id: 'epic',      name: 'Épique',     color: '#9333EA' },
+  { id: 'legendary', name: 'Légendaire', color: '#D97706' },
+];
+const MAX_WELCOME_CHESTS = 3;
+
+/** Avatars à débloquer (ajoutés à AVATARS mais absents du choix à la création). */
+const REWARD_AVATARS = [
+  { id: 'frog', emoji: '🐸', color: '#86EFAC', rarity: 'common', name: 'Grenouille' },
+  { id: 'monkey', emoji: '🐵', color: '#FCD34D', rarity: 'common', name: 'Singe' },
+  { id: 'penguin', emoji: '🐧', color: '#93C5FD', rarity: 'common', name: 'Pingouin' },
+  { id: 'hamster', emoji: '🐹', color: '#FDBA74', rarity: 'common', name: 'Hamster' },
+  { id: 'lion', emoji: '🦁', color: '#FBBF24', rarity: 'rare', name: 'Lion' },
+  { id: 'tiger', emoji: '🐯', color: '#FB923C', rarity: 'rare', name: 'Tigre' },
+  { id: 'owl', emoji: '🦉', color: '#A78BFA', rarity: 'rare', name: 'Hibou' },
+  { id: 'octopus', emoji: '🐙', color: '#F472B6', rarity: 'rare', name: 'Pieuvre' },
+  { id: 'dino', emoji: '🦖', color: '#4ADE80', rarity: 'epic', name: 'Dino' },
+  { id: 'shark', emoji: '🦈', color: '#38BDF8', rarity: 'epic', name: 'Requin' },
+  { id: 'butterfly', emoji: '🦋', color: '#C4B5FD', rarity: 'epic', name: 'Papillon' },
+  { id: 'dragon', emoji: '🐲', color: '#22C55E', rarity: 'legendary', name: 'Dragon' },
+  { id: 'wizard', emoji: '🧙', color: '#6366F1', rarity: 'legendary', name: 'Magicien' },
+];
+REWARD_AVATARS.forEach(a => AVATARS.push(Object.assign({ reward: true }, a)));
+
+const REWARD_FRAMES = [
+  { id: 'bronze', name: 'Cadre bronze', rarity: 'common' },
+  { id: 'silver', name: 'Cadre argent', rarity: 'rare' },
+  { id: 'mint', name: 'Cadre menthe', rarity: 'rare' },
+  { id: 'gold', name: 'Cadre or', rarity: 'epic' },
+  { id: 'fire', name: 'Cadre de feu', rarity: 'epic' },
+  { id: 'rainbow', name: 'Cadre arc-en-ciel', rarity: 'legendary' },
+  { id: 'galaxy', name: 'Cadre galaxie', rarity: 'legendary' },
+];
+
+const REWARD_THEMES = [
+  { id: 'mint', label: 'Menthe', name: 'Thème Menthe', rarity: 'rare', swatch: '#0D9488' },
+  { id: 'candy', label: 'Bonbon', name: 'Thème Bonbon', rarity: 'rare', swatch: '#EC4899' },
+  { id: 'lava', label: 'Lave', name: 'Thème Lave', rarity: 'epic', swatch: '#DC2626' },
+  { id: 'gold', label: 'Or', name: 'Thème Or', rarity: 'epic', swatch: '#B45309' },
+  { id: 'space', label: 'Espace', name: 'Thème Espace', rarity: 'legendary', swatch: '#7C3AED' },
+];
+
+const REWARD_BADGES = [
+  { id: 'table', emoji: '🍽️', name: 'Pro de la table', rarity: 'common' },
+  { id: 'sponge', emoji: '🧽', name: 'Éponge magique', rarity: 'common' },
+  { id: 'rising', emoji: '🌟', name: 'Étoile montante', rarity: 'common' },
+  { id: 'flash', emoji: '⚡', name: 'Éclair', rarity: 'rare' },
+  { id: 'broom', emoji: '🧹', name: 'Balai d’or', rarity: 'rare' },
+  { id: 'hero', emoji: '🦸', name: 'Super-héros du foyer', rarity: 'epic' },
+  { id: 'legend', emoji: '👑', name: 'Légende', rarity: 'legendary' },
+];
+
+const REWARD_POINTS = { common: 20, rare: 50, epic: 120, legendary: 300 };
+
+function rarityOf(id) {
+  return RARITIES.find(r => r.id === id) || RARITIES[0];
+}
+
+/** Chances (%) par rareté selon le niveau : le légendaire passe de 1 % à 12 %. */
+function rarityOdds(level) {
+  const lv = Math.max(1, level || 1);
+  const legendary = Math.min(12, 1 + (lv - 1) * 0.5);
+  const epic = Math.min(25, 6 + (lv - 1) * 0.8);
+  const rare = Math.min(35, 25 + (lv - 1) * 0.5);
+  return { common: 100 - legendary - epic - rare, rare, epic, legendary };
+}
+
+function ensureRewardFields(p) {
+  if (p.type !== 'child') return;
+  if (!p.rewards) {
+    p.rewards = { avatars: [], frames: [], themes: [], badges: [] };
+    // Les enfants déjà avancés reçoivent quelques coffres de bienvenue
+    p.pendingChests = Math.min(MAX_WELCOME_CHESTS, Math.max(0, (p.level || 1) - 1));
+  }
+  if (p.pendingChests == null) p.pendingChests = 0;
+}
+
+function rewardPool(p, rarity) {
+  const r = p.rewards;
+  return [].concat(
+    REWARD_AVATARS.filter(x => x.rarity === rarity && r.avatars.indexOf(x.id) === -1).map(x => ({ kind: 'avatar', item: x })),
+    REWARD_FRAMES.filter(x => x.rarity === rarity && r.frames.indexOf(x.id) === -1).map(x => ({ kind: 'frame', item: x })),
+    REWARD_THEMES.filter(x => x.rarity === rarity && r.themes.indexOf(x.id) === -1).map(x => ({ kind: 'theme', item: x })),
+    REWARD_BADGES.filter(x => x.rarity === rarity && r.badges.indexOf(x.id) === -1).map(x => ({ kind: 'badge', item: x })),
+    [{ kind: 'points', item: { id: 'pts', name: `${REWARD_POINTS[rarity]} points`, amount: REWARD_POINTS[rarity] } }]
+  );
+}
+
+function drawRarity(level) {
+  const odds = rarityOdds(level);
+  let roll = Math.random() * 100;
+  for (const r of ['legendary', 'epic', 'rare', 'common']) {
+    roll -= odds[r];
+    if (roll < 0) return r;
+  }
+  return 'common';
+}
+
+/** Ouvre un coffre : renvoie la récompense obtenue (déjà enregistrée sur le profil). */
+function openChest(p) {
+  ensureRewardFields(p);
+  if (p.pendingChests <= 0) return null;
+  p.pendingChests--;
+  p.chestsOpened = (p.chestsOpened || 0) + 1;
+  const rarity = drawRarity(p.level);
+  const pool = rewardPool(p, rarity);
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  const result = { rarity, kind: pick.kind, item: pick.item };
+  if (pick.kind === 'points') {
+    p.points = (p.points || 0) + pick.item.amount;
+  } else {
+    p.rewards[pick.kind + 's'].push(pick.item.id);
+  }
+  return result;
+}
+
+function frameClass(p) {
+  return p && p.frame ? ` frame-${p.frame}` : '';
+}
+
+function badgeOf(p) {
+  return p && p.badge ? REWARD_BADGES.find(b => b.id === p.badge) : null;
+}
+
+function rewardVisual(kind, item) {
+  if (kind === 'avatar') return `<img class="rw-avatar" src="${avatarSVG(item.id, 96)}" alt="">`;
+  if (kind === 'frame') return `<img class="rw-avatar frame-${item.id}" src="${avatarSVG(getCurrentProfile().avatar, 96)}" alt="">`;
+  if (kind === 'theme') return `<span class="rw-swatch" style="background:${item.swatch}">🎨</span>`;
+  if (kind === 'badge') return `<span class="rw-emoji">${item.emoji}</span>`;
+  return '<span class="rw-emoji">🪙</span>';
+}
+
+const KIND_LABELS = { avatar: 'Nouvel avatar', frame: 'Nouveau cadre', theme: 'Thème exclusif', badge: 'Nouveau badge', points: 'Points bonus' };
+
+function renderChestButton(p) {
+  const btn = document.getElementById('btn-chest');
+  if (!btn) return;
+  const n = (p && p.pendingChests) || 0;
+  btn.style.display = n > 0 ? '' : 'none';
+  btn.innerHTML = `🎁<span class="chest-count">${n}</span>`;
+}
+
+function openChestModal() {
+  const p = getCurrentProfile();
+  if (!p) return;
+  ensureRewardFields(p);
+  const body = document.getElementById('chest-body');
+  if (p.pendingChests <= 0) { closeModal('modal-chest'); return; }
+  body.innerHTML = `
+    <div class="chest-closed">🎁</div>
+    <p class="hint">Tu as <strong>${p.pendingChests}</strong> coffre${p.pendingChests > 1 ? 's' : ''} à ouvrir !</p>
+    <button class="btn-primary btn-large" id="btn-open-chest">Ouvrir le coffre !</button>`;
+  document.getElementById('btn-open-chest').addEventListener('click', revealChest);
+  openModal('modal-chest');
+}
+
+function revealChest() {
+  const p = getCurrentProfile();
+  const box = document.querySelector('#chest-body .chest-closed');
+  if (box) box.classList.add('opening');
+  const btn = document.getElementById('btn-open-chest');
+  if (btn) btn.disabled = true;
+  setTimeout(() => {
+    const res = openChest(p);
+    if (!res) return;
+    saveState();
+    const rar = rarityOf(res.rarity);
+    const equipable = res.kind !== 'points';
+    document.getElementById('chest-body').innerHTML = `
+      <div class="reward-card rarity-${res.rarity}" style="--rar:${rar.color}">
+        <div class="rw-rarity">${rar.name}</div>
+        ${rewardVisual(res.kind, res.item)}
+        <div class="rw-kind">${KIND_LABELS[res.kind]}</div>
+        <div class="rw-name">${res.item.name || ''}</div>
+      </div>
+      <div class="modal-actions">
+        ${equipable ? `<button class="btn-secondary" id="btn-equip-reward">Équiper</button>` : ''}
+        <button class="btn-primary" id="btn-chest-next">${p.pendingChests > 0 ? `Coffre suivant (${p.pendingChests})` : 'Super !'}</button>
+      </div>`;
+    if (equipable) {
+      document.getElementById('btn-equip-reward').addEventListener('click', () => {
+        equipReward(p, res.kind, res.item.id);
+        document.getElementById('btn-equip-reward').textContent = 'Équipé ✔';
+        document.getElementById('btn-equip-reward').disabled = true;
+      });
+    }
+    document.getElementById('btn-chest-next').addEventListener('click', () => {
+      if (p.pendingChests > 0) openChestModal(); else closeModal('modal-chest');
+    });
+    refreshChildChrome();
+  }, 900);
+}
+
+function equipReward(p, kind, id) {
+  if (kind === 'avatar') {
+    // On mémorise l'avatar choisi à la création pour pouvoir y revenir
+    const isBase = a => AVATARS.some(x => x.id === a && !x.reward);
+    if (isBase(p.avatar)) p.baseAvatar = p.avatar;
+    p.avatar = id;
+  }
+  if (kind === 'frame') p.frame = p.frame === id ? null : id;
+  if (kind === 'badge') p.badge = p.badge === id ? null : id;
+  if (kind === 'theme') { p.theme = id; applyProfileTheme(); }
+  saveState();
+  refreshChildChrome();
+}
+
+/** Met à jour l'en-tête (avatar, cadre, badge, coffres) et la collection. */
+function refreshChildChrome() {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  const img = document.getElementById('current-avatar');
+  img.src = avatarSVG(p.avatar, 42);
+  img.className = 'avatar-sm' + frameClass(p);
+  const title = getTitleForLevel(p.level || 1);
+  const badge = badgeOf(p);
+  document.getElementById('current-title').textContent = `${title.emoji} ${title.name}` + (badge ? ` · ${badge.emoji} ${badge.name}` : '');
+  renderChestButton(p);
+  updateStatsBar();
+  renderCollection(p);
+}
+
+function renderCollection(p) {
+  const el = document.getElementById('collection');
+  if (!el || !p) return;
+  ensureRewardFields(p);
+  const odds = rarityOdds(p.level);
+  const r = p.rewards;
+  const tile = (kind, item, owned, equipped, visual) => {
+    const rar = rarityOf(item.rarity);
+    return `<button type="button" class="col-tile ${owned ? 'owned' : 'locked'} ${equipped ? 'equipped' : ''}"
+      style="--rar:${rar.color}" ${owned ? `data-equip="${kind}" data-id="${item.id}"` : 'disabled'} title="${item.name} (${rar.name})">
+      ${owned ? visual : '<span class="rw-emoji small">🔒</span>'}
+      <span class="col-name">${owned ? item.name : rar.name}</span>
+    </button>`;
+  };
+  const baseAvatars = AVATARS.filter(a => !a.reward);
+  el.innerHTML = `
+    <div class="section-header" style="margin-bottom:0.3rem">
+      <h3>🎁 Ma collection</h3>
+      ${p.pendingChests > 0 ? `<button class="btn-primary btn-sm" data-open-chest>Ouvrir ${p.pendingChests} coffre${p.pendingChests > 1 ? 's' : ''}</button>` : ''}
+    </div>
+    <p class="hint">Un coffre à chaque niveau gagné. Chances au niveau ${p.level || 1} :
+      ${RARITIES.map(x => `<span style="color:${x.color};font-weight:700">${x.name} ${Math.round(odds[x.id] * 10) / 10} %</span>`).join(' · ')}.
+      Un doublon est transformé en points.</p>
+    <div class="col-group"><strong>Avatars</strong><div class="col-grid">
+      ${baseAvatars.filter(a => a.id === (p.baseAvatar || p.avatar)).map(a => tile('avatar', Object.assign({ name: 'Mon avatar', rarity: 'common' }, a), true, p.avatar === a.id, `<img class="rw-avatar small" src="${avatarSVG(a.id, 56)}" alt="">`)).join('')}
+      ${REWARD_AVATARS.map(a => tile('avatar', a, r.avatars.indexOf(a.id) !== -1, p.avatar === a.id, `<img class="rw-avatar small" src="${avatarSVG(a.id, 56)}" alt="">`)).join('')}
+    </div></div>
+    <div class="col-group"><strong>Cadres</strong><div class="col-grid">
+      ${REWARD_FRAMES.map(f => tile('frame', f, r.frames.indexOf(f.id) !== -1, p.frame === f.id, `<img class="rw-avatar small frame-${f.id}" src="${avatarSVG(p.avatar, 56)}" alt="">`)).join('')}
+    </div></div>
+    <div class="col-group"><strong>Thèmes exclusifs</strong><div class="col-grid">
+      ${REWARD_THEMES.map(t => tile('theme', t, r.themes.indexOf(t.id) !== -1, p.theme === t.id, `<span class="rw-swatch small" style="background:${t.swatch}"></span>`)).join('')}
+    </div></div>
+    <div class="col-group"><strong>Badges</strong><div class="col-grid">
+      ${REWARD_BADGES.map(b => tile('badge', b, r.badges.indexOf(b.id) !== -1, p.badge === b.id, `<span class="rw-emoji small">${b.emoji}</span>`)).join('')}
+    </div></div>`;
+}
+
+
 /** Hash simple pour mot de passe (pas crypto fort, mais suffisant hors-ligne) */
 async function hashPassword(pwd) {
   const enc = new TextEncoder().encode('chores_salt_' + pwd);
@@ -1213,7 +1479,7 @@ function renderProfiles() {
     const title = getTitleForLevel(p.level || 1);
     return `
       <div class="profile-card ${isParent ? 'parent-card' : ''}" data-id="${p.id}">
-        <img class="avatar" src="${avatarSVG(p.avatar)}" alt="${p.name}">
+        <img class="avatar${frameClass(p)}" src="${avatarSVG(p.avatar)}" alt="${p.name}">
         <div class="name">${p.name}</div>
         ${isParent
           ? '<div class="badge-parent">🔑 Parent</div>'
@@ -1266,12 +1532,9 @@ function showMainChild() {
   taskDay = null;
   stripWeekOffset = 0;
 
-  document.getElementById('current-avatar').src = avatarSVG(p.avatar, 42);
   document.getElementById('current-name').textContent = p.name;
-  const title = getTitleForLevel(p.level || 1);
-  document.getElementById('current-title').textContent = `${title.emoji} ${title.name}`;
-
-  updateStatsBar();
+  ensureRewardFields(p);
+  refreshChildChrome();
   renderChildTasks();
   renderWallet();
   renderCompany();
@@ -1296,8 +1559,11 @@ function showMainAdmin() {
   renderAdminPlanning();
 
   const pending = state.profiles.filter(c => c.type === 'child' && c.company && pendingRaise(c));
+  const askMoney = payouts().filter(x => x.status === 'pending');
   if (pending.length) {
     setTimeout(() => showToast(`🤝 ${pending.map(c => c.name).join(', ')} : demande d’augmentation (onglet Famille)`, 4000), 500);
+  } else if (askMoney.length) {
+    setTimeout(() => showToast(`💶 ${askMoney.length} demande(s) de versement (onglet Famille)`, 4000), 500);
   }
 }
 
@@ -1576,8 +1842,10 @@ function confirmComplete() {
   profile.xp = (profile.xp || 0) + earned;
 
   let leveled = false;
+  ensureRewardFields(profile);
   while (profile.xp >= xpForLevel((profile.level || 1) + 1)) {
     profile.level = (profile.level || 1) + 1;
+    profile.pendingChests++;
     leveled = true;
   }
 
@@ -1591,7 +1859,8 @@ function confirmComplete() {
   if (leveled) {
     setTimeout(() => {
       const title = getTitleForLevel(profile.level);
-      showToast(`Niveau ${profile.level} ! ${title.emoji} ${title.name}`, 3500);
+      showToast(`Niveau ${profile.level} ! ${title.emoji} ${title.name} · 🎁 Coffre gagné !`, 3500);
+      refreshChildChrome();
     }, 800);
   }
 }
@@ -1635,6 +1904,7 @@ function renderWallet() {
         <div class="amount">+${formatMoney(h.amount)}</div>
       </div>`).join('');
   document.getElementById('rate-display-back').textContent = formatRate(state.settings.rate);
+  renderChildPayouts(p);
   updateEurosPreview();
 }
 
@@ -2096,6 +2366,7 @@ function renderProgress() {
   document.getElementById('stat-tasks-done').textContent = p.tasksDone || 0;
   document.getElementById('stat-points-total').textContent = p.pointsTotal || 0;
   document.getElementById('stat-money-total').textContent = formatMoney(p.moneyTotal || 0);
+  renderCollection(p);
 }
 
 // ---------- ADMIN ----------
@@ -2279,7 +2550,7 @@ function renderAdminFamily() {
     list.innerHTML = `<div class="empty-state"><p>Aucun membre.</p></div>`;
     return;
   }
-  list.innerHTML = state.profiles.map(p => {
+  list.innerHTML = payoutsAdminHtml() + '<div class="section-header" style="margin-top:1rem"><h2>Membres</h2></div>' + state.profiles.map(p => {
     const isParent = p.type === 'parent';
     if (!isParent) ensureInvestFields(p);
     const req = !isParent && pendingRaise(p);
@@ -2505,6 +2776,209 @@ function renderAdminStats() {
     </div>`;
 }
 
+// ---------- VERSEMENTS RÉELS (argent de poche) ----------
+// Le porte-monnaie de l'enfant = argent que les parents lui doivent.
+// Une demande met le montant de côté (débité du porte-monnaie) jusqu'à ce qu'un
+// parent la marque payée (espèces, virement, tirelire) ou la refuse (montant rendu).
+const PAYOUT_METHODS = [
+  { id: 'cash', label: '💵 Espèces' },
+  { id: 'transfer', label: '🏦 Virement' },
+  { id: 'piggy', label: '🐷 Tirelire' },
+];
+let payoutChildId = null;
+let payoutMethod = 'cash';
+
+function payouts() {
+  if (!state.payouts) state.payouts = [];
+  return state.payouts;
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function pendingPayout(childId) {
+  return round2(payouts().filter(x => x.childId === childId && x.status === 'pending').reduce((s, x) => s + x.amount, 0));
+}
+
+function methodLabel(id) {
+  const m = PAYOUT_METHODS.find(x => x.id === id);
+  return m ? m.label : '';
+}
+
+function profileName(id) {
+  const p = state.profiles.find(x => x.id === id);
+  return p ? p.name : '?';
+}
+
+/** L'enfant demande à recevoir une somme : elle est mise de côté jusqu'au versement. */
+function requestPayout(amount) {
+  const p = getCurrentProfile();
+  if (!p || p.type !== 'child') return;
+  amount = round2(amount);
+  if (!(amount > 0)) { showToast('Entre un montant valide'); return; }
+  if (amount > (p.wallet || 0) + 0.001) { showToast('Pas assez d’argent dans le porte-monnaie !'); return; }
+  p.wallet = round2((p.wallet || 0) - amount);
+  payouts().unshift({ id: newId('po_'), childId: p.id, amount, status: 'pending', requestedAt: new Date().toISOString() });
+  saveState();
+  updateStatsBar();
+  renderWallet();
+  showToast(`Demande de ${formatMoney(amount)} envoyée aux parents 💶`);
+}
+
+function cancelPayout(id) {
+  const po = payouts().find(x => x.id === id && x.status === 'pending');
+  const p = po && state.profiles.find(x => x.id === po.childId);
+  if (!po || !p) return;
+  po.status = 'cancelled';
+  po.closedAt = new Date().toISOString();
+  p.wallet = round2((p.wallet || 0) + po.amount);
+  saveState();
+  updateStatsBar();
+  renderWallet();
+  showToast('Demande annulée, argent remis dans le porte-monnaie');
+}
+
+/** Parent : marque une demande comme payée (ou la refuse, l'argent revient à l'enfant). */
+function settlePayout(id, method) {
+  const po = payouts().find(x => x.id === id && x.status === 'pending');
+  const parent = getCurrentProfile();
+  if (!po || !parent) return;
+  if (method === 'refuse') {
+    const child = state.profiles.find(x => x.id === po.childId);
+    if (!confirm(`Refuser la demande de ${formatMoney(po.amount)} ?\nL’argent retourne dans le porte-monnaie de ${child ? child.name : 'l’enfant'}.`)) return;
+    po.status = 'refused';
+    if (child) child.wallet = round2((child.wallet || 0) + po.amount);
+    showToast('Demande refusée');
+  } else {
+    po.status = 'paid';
+    po.method = method;
+    showToast(`${formatMoney(po.amount)} versés à ${profileName(po.childId)} ✔`);
+  }
+  po.parentId = parent.id;
+  po.closedAt = new Date().toISOString();
+  saveState();
+  renderAdminFamily();
+}
+
+function openPayoutModal(childId) {
+  const c = state.profiles.find(x => x.id === childId);
+  if (!c) return;
+  payoutChildId = childId;
+  payoutMethod = 'cash';
+  document.getElementById('payout-title').textContent = `💶 Verser à ${c.name}`;
+  document.getElementById('payout-balance').textContent = `Porte-monnaie : ${formatMoney(c.wallet || 0)}`;
+  document.getElementById('payout-amount').value = (c.wallet || 0) > 0 ? String(round2(c.wallet)).replace('.', ',') : '';
+  renderPayoutMethods();
+  openModal('modal-payout');
+}
+
+function renderPayoutMethods() {
+  document.getElementById('payout-methods').innerHTML = PAYOUT_METHODS.map(m =>
+    `<button type="button" class="chip ${payoutMethod === m.id ? 'strong' : ''}" data-method="${m.id}">${m.label}</button>`).join('');
+}
+
+/** Parent : versement direct sans demande préalable. */
+function confirmDirectPayout() {
+  const c = state.profiles.find(x => x.id === payoutChildId);
+  const parent = getCurrentProfile();
+  if (!c || !parent) return;
+  const amount = round2(parseDecimal(document.getElementById('payout-amount').value) || 0);
+  if (!(amount > 0)) { showToast('Entre un montant valide'); return; }
+  if (amount > (c.wallet || 0) + 0.001) { showToast(`Le porte-monnaie de ${c.name} ne contient que ${formatMoney(c.wallet || 0)}`); return; }
+  c.wallet = round2((c.wallet || 0) - amount);
+  const now = new Date().toISOString();
+  payouts().unshift({ id: newId('po_'), childId: c.id, amount, status: 'paid', method: payoutMethod, direct: true, requestedAt: now, closedAt: now, parentId: parent.id });
+  saveState();
+  closeModal('modal-payout');
+  renderAdminFamily();
+  showToast(`${formatMoney(amount)} versés à ${c.name} ✔`);
+}
+
+/** Bloc « argent de poche » de l'onglet Famille. */
+function payoutsAdminHtml() {
+  const children = state.profiles.filter(p => p.type === 'child');
+  if (!children.length) return '';
+  const month = monthKeyOf(new Date());
+  const all = payouts();
+  const pending = all.filter(x => x.status === 'pending' && children.some(c => c.id === x.childId));
+  const paidMonth = all.filter(x => x.status === 'paid' && x.closedAt && monthKeyOf(x.closedAt) === month);
+  const byParent = {};
+  paidMonth.forEach(x => { byParent[x.parentId] = (byParent[x.parentId] || 0) + x.amount; });
+  const owed = round2(children.reduce((s, c) => s + (c.wallet || 0) + pendingPayout(c.id), 0));
+  const history = all.filter(x => x.status === 'paid' || x.status === 'refused').slice(0, 12);
+
+  return `
+    <div class="payout-admin">
+      <div class="section-header"><h2>💶 Argent de poche</h2>
+        <span class="hint">Reste dû : <strong>${formatMoney(owed)}</strong></span></div>
+
+      ${pending.map(x => `
+        <div class="raise-request payout-request">
+          <span>💶 <strong>${escapeHtml(profileName(x.childId))}</strong> demande <strong>${formatMoney(x.amount)}</strong>
+            <small>· ${formatDate(x.requestedAt)}</small></span>
+          <div class="chips">
+            ${PAYOUT_METHODS.map(m => `<button class="chip strong" data-settle="${x.id}" data-method="${m.id}">Payé · ${m.label}</button>`).join('')}
+            <button class="chip" data-settle="${x.id}" data-method="refuse">Refuser</button>
+          </div>
+        </div>`).join('')}
+
+      <div class="payout-children">
+        ${children.map(c => `
+          <div class="payout-child">
+            <img src="${avatarSVG(c.avatar, 36)}" alt="">
+            <div class="pc-info"><strong>${escapeHtml(c.name)}</strong>
+              <span>Porte-monnaie ${formatMoney(c.wallet || 0)}${pendingPayout(c.id) ? ` · en attente ${formatMoney(pendingPayout(c.id))}` : ''}</span></div>
+            <button class="chip strong" data-payout-child="${c.id}" ${(c.wallet || 0) > 0 ? '' : 'disabled'}>Verser</button>
+          </div>`).join('')}
+      </div>
+
+      <div class="hint">Versé ce mois-ci : <strong>${formatMoney(paidMonth.reduce((s, x) => s + x.amount, 0))}</strong>
+        ${Object.keys(byParent).length ? '(' + Object.keys(byParent).map(id => `${escapeHtml(profileName(id))} ${formatMoney(byParent[id])}`).join(' · ') + ')' : ''}</div>
+
+      ${history.length ? `<table class="stats-table payout-table">
+        <thead><tr><th>Date</th><th>Enfant</th><th>Montant</th><th>Par</th><th>Moyen</th></tr></thead>
+        <tbody>${history.map(x => `<tr class="${x.status}">
+          <td>${formatDate(x.closedAt || x.requestedAt)}</td><td>${escapeHtml(profileName(x.childId))}</td>
+          <td><strong>${formatMoney(x.amount)}</strong></td><td>${escapeHtml(profileName(x.parentId))}</td>
+          <td>${x.status === 'refused' ? '🙅 Refusé' : methodLabel(x.method)}</td></tr>`).join('')}</tbody>
+      </table>` : '<p class="hint">Aucun versement enregistré pour l’instant.</p>'}
+    </div>`;
+}
+
+/** Bloc « demander mon argent » du portefeuille enfant. */
+function renderChildPayouts(p) {
+  const el = document.getElementById('child-payouts');
+  if (!el) return;
+  const wallet = p.wallet || 0;
+  const mine = payouts().filter(x => x.childId === p.id);
+  const pend = mine.filter(x => x.status === 'pending');
+  const done = mine.filter(x => x.status === 'paid' || x.status === 'refused').slice(0, 5);
+  const quick = [5, 10].filter(v => v < wallet);
+  el.innerHTML = `
+    <h3>💶 Recevoir mon argent</h3>
+    <p class="hint">Demande à tes parents de te verser ton argent pour de vrai. Le montant est mis de côté jusqu’à ce qu’ils te le donnent.</p>
+    <div class="chips" style="margin:0.6rem 0">
+      ${quick.map(v => `<button class="chip" data-request-payout="${v}">${formatMoney(v)}</button>`).join('')}
+      <button class="chip strong" data-request-payout="${round2(wallet)}" ${wallet > 0 ? '' : 'disabled'}>Tout (${formatMoney(wallet)})</button>
+    </div>
+    <div class="convert-row">
+      <input type="text" inputmode="decimal" id="payout-request-amount" placeholder="Autre montant (€)" autocomplete="off">
+      <button class="btn-primary" id="btn-request-payout">Demander</button>
+    </div>
+    ${pend.map(x => `
+      <div class="history-item">
+        <div><div>⏳ ${formatMoney(x.amount)} en attente des parents</div><div class="date">${formatDate(x.requestedAt)}</div></div>
+        <button class="chip" data-cancel-payout="${x.id}">Annuler</button>
+      </div>`).join('')}
+    ${done.map(x => `
+      <div class="history-item">
+        <div><div>${x.status === 'paid' ? `💶 Reçu de ${escapeHtml(profileName(x.parentId))} · ${methodLabel(x.method)}` : '🙅 Demande refusée (argent rendu)'}</div>
+          <div class="date">${formatDate(x.closedAt)}</div></div>
+        <div class="amount ${x.status === 'paid' ? '' : 'neg'}">${formatMoney(x.amount)}</div>
+      </div>`).join('')}`;
+}
+
 // ---------- TEMPLATE MODAL ----------
 function openTemplateModal(editId = null) {
   editingTemplateId = editId;
@@ -2578,7 +3052,7 @@ function openProfileModal() {
   });
 
   const grid = document.getElementById('avatars-grid');
-  grid.innerHTML = AVATARS.map(a => `
+  grid.innerHTML = AVATARS.filter(a => !a.reward).map(a => `
     <img class="avatar-option ${a.id === selectedAvatar ? 'selected' : ''}"
          src="${avatarSVG(a.id, 64)}" data-id="${a.id}" alt="">
   `).join('');
@@ -2717,8 +3191,8 @@ function applyProfileTheme() {
   setBodyTheme((p && p.theme) || state.settings.theme || 'default');
 }
 
-function themeButtons(selected) {
-  return THEMES.map(t =>
+function themeButtons(selected, extra) {
+  return THEMES.concat(extra || []).map(t =>
     `<button class="theme-btn ${selected === t.id ? 'selected' : ''}" data-theme="${t.id}">${t.label}</button>`).join('');
 }
 
@@ -2727,7 +3201,10 @@ function openProfileTheme() {
   if (!p) return;
   document.getElementById('profile-theme-title').textContent = `🎨 Thème de ${p.name}`;
   const grid = document.getElementById('profile-themes-grid');
-  grid.innerHTML = themeButtons(p.theme || state.settings.theme || 'default');
+  const unlocked = p.rewards ? REWARD_THEMES.filter(t => p.rewards.themes.indexOf(t.id) !== -1) : [];
+  grid.innerHTML = themeButtons(p.theme || state.settings.theme || 'default', unlocked)
+    + (p.type === 'child' && unlocked.length < REWARD_THEMES.length
+      ? `<p class="hint" style="grid-column:1/-1">🔒 ${REWARD_THEMES.length - unlocked.length} thème(s) exclusif(s) à gagner dans les coffres 🎁</p>` : '');
   openModal('modal-theme');
 }
 
@@ -3011,7 +3488,31 @@ function init() {
     if (p.type === 'parent') renderAdminStats();
     showToast('Thème appliqué 🎨');
   });
+  document.getElementById('btn-chest').addEventListener('click', openChestModal);
+  document.getElementById('tab-progress').addEventListener('click', e => {
+    if (e.target.closest('[data-open-chest]')) { openChestModal(); return; }
+    const t = e.target.closest('[data-equip]');
+    const p = getCurrentProfile();
+    if (t && p) {
+      equipReward(p, t.dataset.equip, t.dataset.id);
+      showToast('Équipé ✔');
+    }
+  });
   document.getElementById('btn-euros').addEventListener('click', convertEuros);
+  document.getElementById('child-payouts').addEventListener('click', e => {
+    const q = e.target.closest('[data-request-payout]');
+    if (q && !q.disabled) { requestPayout(parseFloat(q.dataset.requestPayout)); return; }
+    const c = e.target.closest('[data-cancel-payout]');
+    if (c) { cancelPayout(c.dataset.cancelPayout); return; }
+    if (e.target.closest('#btn-request-payout')) {
+      requestPayout(parseDecimal(document.getElementById('payout-request-amount').value) || 0);
+    }
+  });
+  document.getElementById('payout-methods').addEventListener('click', e => {
+    const m = e.target.closest('[data-method]');
+    if (m) { payoutMethod = m.dataset.method; renderPayoutMethods(); }
+  });
+  document.getElementById('btn-confirm-payout').addEventListener('click', confirmDirectPayout);
   document.getElementById('convert-euros').addEventListener('input', updateEurosPreview);
   document.getElementById('admin-stats').addEventListener('click', e => {
     const per = e.target.closest('[data-stats-period]');
@@ -3053,6 +3554,10 @@ function init() {
     showToast('Mode d’augmentation mis à jour');
   });
   document.getElementById('admin-family-list').addEventListener('click', e => {
+    const settle = e.target.closest('[data-settle]');
+    if (settle) { settlePayout(settle.dataset.settle, settle.dataset.method); return; }
+    const pay = e.target.closest('[data-payout-child]');
+    if (pay && !pay.disabled) { openPayoutModal(pay.dataset.payoutChild); return; }
     const btn = e.target.closest('[data-raise]');
     if (btn) answerRaise(btn.dataset.child, btn.dataset.raise === 'accept');
   });
